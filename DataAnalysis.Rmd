@@ -252,10 +252,6 @@ df_affect_excs <- df_affect %>%
          & subject_id != 33
          & subject_id != 50)
 
-df_aat_excs %>% group_by(subject_id, session_nr, mood_induction, block_order) %>% 
-  summarize() #%>% 
-  #print()
-
 ```
 
 ```{r check-error-rates}
@@ -383,6 +379,9 @@ df_affect_agg <- df_affect_mutate %>%
             sd = round(sd(panas_score), 2)) %>% 
   print()
 ```
+```{r save-panas-data}
+save(df_affect_mutate, file = "panas.Rdata")
+```
 
 ### Further preprocessing AAT data
 The AAT data also needs further preprocessing. Here's a plot of the raw data:
@@ -504,4 +503,8 @@ df_aat_log %>%
     title = "Log-transformed data",
     x = "log(RT)"
   )
+```
+
+```{r save-aat-data}
+save(df_aat_log, file = "affect-aat.Rdata")
 ```
