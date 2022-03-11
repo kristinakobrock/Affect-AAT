@@ -1,48 +1,85 @@
 ---
-title: "DataViz_AAAT"
+title: "Data Affect-AAT"
 author: "Kristina Kobrock"
-date: "10 1 2022"
+date: "10 3 2022"
 output: html_document
 ---
-```{r setup, include=FALSE, warning=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, message = FALSE, warning = FALSE)
+```
+```{r libraries, include=FALSE, message=FALSE, warning=FALSE}
+# package to extract R data from matlab files
 library(R.matlab)
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
 library(tidyverse)
+
+# package for Bayesian regression modeling
 library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package to visualize 
+library(bayesplot)
+
+# package to extract HDIs
+library(HDInterval)
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+# Green RYB: 5EB045, Barn red: 811F0E, Charcoal: 424B54, maximum yellow red: FFBA49, copper crayola: DE8F6E
+project_colors = c("#811F0E", "#5EB045", "#424B54", "#FFBA49", "#DE8F6E", "#000000")
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
 ```
 
 # The role of affect in the Automatic Approach Bias: An empirical investigation.
 
-## Data Analysis
+## Inspecting and preparing the data
 
 ### Read and preprocess the data
+Reading in the .matlab files (two per subject, one for each session from the session folders).
 ```{r read_data}
 files_1stsession = file.path("./data/1stsession",  list.files(path="./data/1stsession", pattern=".mat$"))
 files_2ndsession = file.path("./data/2ndsession", list.files(path="./data/2ndsession", pattern=".mat$"))
 session_1 <- lapply(files_1stsession, readMat)
 session_2 <- lapply(files_2ndsession, readMat)
 ```
+Writing a preprocessing function for the AAT relevant data (information about the participants, conditions and measured reaction times).
 ```{r preprocess_function_aat}
 preprocess_aat <- function(data) {
   
-  subjectindex <- data$subject.index # unique subject ID
-  subjectname <- data$subject.name
-  subjectage <- data$subject.age
+  subject_id <- data$subject.index # unique subject ID
+  subjectname <- data$subject.name # subject initials
+  subjectage <- data$subject.age 
   subjectgender <- data$subject.gender
-  subjecthand <- data$subject.hand
-  date <- data$subject.date
-  session_nr <- data$subject.session
-  mood_induction <- data$mood.induction
+  subjecthand <- data$subject.hand # subject handedness, i.e. the dominant hand used for writing
+  timestamp <- data$subject.date # time log
+  session_nr <- data$subject.session # 1 or 2
+  mood_induction <- data$mood.induction # positive (p) or negative (n)
 
   block_order <- data$category # block order: a=congruent-incongruent, b=incongruent-congruent
   if (block_order == 'a') {
-    block <- c(rep(c("congruent", "incongruent", "congruent", "incongruent"), times=c(44,44,44,44)))  
+    condition <- c(rep(c("congruent", "incongruent", "congruent", "incongruent"), times=c(44,44,44,44)))  
   }
   else {
-    block <- c(rep(c("incongruent", "congruent", "incongruent", "congruent"), times=c(44,44,44,44)))
+    condition <- c(rep(c("incongruent", "congruent", "incongruent", "congruent"), times=c(44,44,44,44)))
   }
   
-  # sequences: picture order (number 1-44 are positive, 45-88 are negative   pictures)
+  # sequences: picture order (number 1-44 are positive, 45-88 are negative pictures)
   sequence_1 <- c()
   sequence_2 <- c()
   for (i in 1:176){
@@ -58,41 +95,47 @@ preprocess_aat <- function(data) {
   alltimes <- data$alltimes # all reaction times
 
 
-  df <- data.frame(subjectindex = rep(subjectindex, 176),
+  df <- data.frame(subject_id = rep(as.numeric(as.character(subject_id)), 176),
                    subjectname = rep(subjectname, 176),
                    subjectgender = rep(subjectgender, 176),
-                   subjectage = rep(subjectage, 176),
+                   subjectage = rep(as.numeric(as.character(subjectage)), 176), # convert from factor to numeric vector
                    subjecthand = rep(subjecthand, 176),
+                   timestamp = rep(timestamp, 176),
+                   date = rep(substr(timestamp, 1, 10), 176),
+                   year = rep(as.numeric(as.character(substr(timestamp, 1, 4))), 176), # extract year as double
+                   month = rep(as.numeric(as.character(substr(timestamp, 6,7))), 176), # extract month as double
+                   day = rep(as.numeric(as.character(substr(timestamp, 9, 10))), 176), # extract day as double
                    session_nr = rep(session_nr, 176),
                    mood_induction = rep(mood_induction, 176),
                    block_order = rep(block_order, 176),
                    trial = c(1:176),
-                   block = block,
+                   condition = condition,
                    pictures = c(sequence_1, sequence_2),
                    response = pushtimes[1:176],
                    pushtimes = pushtimes[1:176],
                    pulltimes = pulltimes[1:176],
-                   reaction_times = alltimes[1:176]) %>% 
+                   reaction_times = alltimes[1:176] * 1000) %>% # change scaling to ms
     mutate(stimulus = ifelse(pictures <= 44, "positive", "negative"),
            response = ifelse(response == 0, "pull", "push"),
-           correct = ifelse(((block == "congruent" & stimulus == "positive" & response == "pull") |
-                               (block == "congruent" & stimulus == "negative" & response == "push") |
-                               (block == "incongruent" & stimulus == "positive" & response == "push") |
-                               (block == "incongruent" & stimulus == "negative" & response == "pull")), 1, 0))
+           correct = ifelse(((condition == "congruent" & stimulus == "positive" & response == "pull") |
+                               (condition == "congruent" & stimulus == "negative" & response == "push") |
+                               (condition == "incongruent" & stimulus == "positive" & response == "push") |
+                               (condition == "incongruent" & stimulus == "negative" & response == "pull")), 1, 0))
 }
 ```
+Writing a preprocessing function for the mood induction relevant data (information about the participants and conditions and the PANAS questionnaire data).
 ```{r peprocess_function_affect}
 
 preprocess_affect <- function(data) {
   
-  subjectindex <- data$subject.index # unique subject ID
-  subjectname <- data$subject.name
+  subject_id <- data$subject.index # unique subject ID
+  subjectname <- data$subject.name # subject initials
   subjectage <- data$subject.age
   subjectgender <- data$subject.gender
-  subjecthand <- data$subject.hand
-  date <- data$subject.date
-  session_nr <- data$subject.session
-  mood_induction <- data$mood.induction
+  subjecthand <- data$subject.hand # subject handedness, i.e. dominant hand used for writing
+  date <- data$subject.date # time log
+  session_nr <- data$subject.session # 1 or 2
+  mood_induction <- data$mood.induction # positive (p) or negative (n)
   panas1_item1 <- data$a1item.1
   panas1_item2 <- data$a1item.2
   panas1_item3 <- data$a1item.3
@@ -134,18 +177,22 @@ preprocess_affect <- function(data) {
   panas2_item19 <- data$a2item.19
   panas2_item20 <- data$a2item.20
   
+  # 1st session
   panas_1 <- c(panas1_item1, panas1_item2, panas1_item3, panas1_item4, panas1_item5, panas1_item6, panas1_item7, panas1_item8, panas1_item9, panas1_item10, panas1_item11, panas1_item12, panas1_item13, panas1_item14, panas1_item15, panas1_item16, panas1_item17, panas1_item18, panas1_item19, panas1_item20)
   
+  # 2nd session
   panas_2 <- c(panas2_item1, panas2_item2, panas2_item3, panas2_item4, panas2_item5, panas2_item6, panas2_item7, panas2_item8, panas2_item9, panas2_item10, panas2_item11, panas2_item12, panas2_item13, panas2_item14, panas2_item15, panas2_item16, panas2_item17, panas2_item18, panas2_item19, panas2_item20)
-  
+
+  # items as displayed the questionnaire
 panas_item = c("interested", "distressed", "excited", "upset", "strong", "guilty", "scared", "hostile", "enthusiastic", "proud", "irritable", "alert", "ashamed", "inspired", "nervous", "determined", "attentive", "jittery", "active", "afraid")
 
-item_affect = c("positive", "negative", "positive", "negative", "positive", "negative", "negative", "negative", "positive", "positive", "negative", "positive", "negative", "positive", "negative", "positive", "positive", "negative", "positive", "negative")
+# item affects in the correct order
+item_affect = c("PA", "NA", "PA", "NA", "PA", "NA", "NA", "NA", "PA", "PA", "NA", "PA", "NA", "PA", "NA", "PA", "PA", "NA", "PA", "NA")
 
-df <- data.frame(subjectindex = rep(subjectindex, 20),
+df <- data.frame(subject_id = rep(as.numeric(subject_id), 20),
                  subjectname = rep(subjectname, 20),
                  subjectgender = rep(subjectgender, 20),
-                 subjectage = rep(subjectage, 20),
+                 subjectage = rep(as.numeric(subjectage), 20),
                  subjecthand = rep(subjecthand, 20),
                  session_nr = rep(session_nr, 20),
                  mood_induction = rep(mood_induction, 20),
@@ -159,212 +206,302 @@ df <- data.frame(subjectindex = rep(subjectindex, 20),
   pivot_longer(cols = c('1', '2'), names_to = "panas_nr", values_to = "item_score")
 }
 ```
+Preprocessing: Merging all individual data files into two large data frames: One for AAT data, one for the PANAS data.
 ```{r preprocessing}
 df_aat <- data.frame()
 df_affect <- data.frame()
 for (data_file in session_1) {
   df_single <- data.frame(data_file$subjectdata)[[1]]
-  df_aat <- rbind(df_aat, preprocess_aat(df_single))
+  df_aat <- rbind(df_aat, preprocess_aat(df_single)) # binds data from each data file together
   df_affect <- rbind(df_affect, preprocess_affect(df_single))
 }
 for (data_file in session_2) {
   df_single <- data.frame(data_file$subjectdata)[[1]]
-  df_aat <- rbind(df_aat, preprocess_aat(df_single))
+  df_aat <- rbind(df_aat, preprocess_aat(df_single)) # binds also the second session data to the large dataframe
   df_affect <- rbind(df_affect, preprocess_affect(df_single))
 }
 head(df_aat)
 head(df_affect)
 ```
-```{r}
-# How many data points do I have by now?
-# rough proxy:
-# print(unique(df_aat$subjectindex)) # 76
 
+### Exclude data
+Data from subjects 8, 10, 16, 24, 33 and 50 had to be excluded because of one of three reasons:
+1) measurement error, 
+2) the participant did not fulfill the criteria,
+3) or it was not possible to collect a full set of data (from two sessions).
+```{r exclude-subjects}
 # check whether for each subjectindex is data available from two sessions and two mood inductions (and the same block order)
 df_aat_check <- df_aat %>% 
-  group_by(subjectindex, session_nr, mood_induction, block_order) %>% 
-  summarize() %>% 
-  print
-
-# data from 1st session subject 8 missing (nb-pb) --> exc subject 8
-# exclude subject 10 because she didn't fulfill the criteria (pb-nb) --> exc subject 10
-# second session from subject 16 missing (na-pa) --> exc subject 16
-# second session from subject 24 missing (nb-pb) 
-# subject 33: mistakenly assigned na-pb instead of na-pa --> exc subject 33
-# second session from subject 50 missing (pb-nb) 
-# ...
+  group_by(subject_id, session_nr, mood_induction, block_order) %>% 
+  summarize() 
 
 # only keep data when data from both sessions is available and no measurement errors occured
 df_aat_excs <- df_aat %>% 
-  filter(subjectindex != 8 
-         & subjectindex != 10
-         & subjectindex != 16
-         & subjectindex != 33)
+  filter(subject_id != 8     # data from 1st session is missing
+         & subject_id != 10  # participant didn't fulfill the criteria
+         & subject_id != 16  # 2nd session data is missing
+         & subject_id != 24  # 2nd session data is missing
+         & subject_id != 33  # measurement error (wrong condition)
+         & subject_id != 50) # 2nd session data is missing
 
 df_affect_excs <- df_affect %>% 
-  filter(subjectindex != 8 
-         & subjectindex != 10
-         & subjectindex != 16
-         & subjectindex != 33)
+  filter(subject_id != 8 
+         & subject_id != 10
+         & subject_id != 16
+         & subject_id != 24
+         & subject_id != 33
+         & subject_id != 50)
+
+df_aat_excs %>% group_by(subject_id, session_nr, mood_induction, block_order) %>% 
+  summarize() #%>% 
+  #print()
 
 ```
 
-### Mood induction
-Is the mood induction successful? 
---> positive mood induction: panas_scale more positive in panas_2 than in panas_1
---> negative mood induction: panas_scale more negative in panas_2 than in panas_1
-1. calculate overall panas_scales for each participant
-2. compare and check for statistical significance
+```{r check-error-rates}
+df_aat_errors <- df_aat_excs %>% 
+  group_by(subject_id) %>% 
+  filter(correct == 0) %>% 
+  count() %>% 
+  ungroup() %>% 
+  summarize(min_error = min(n/352*100), max_error = max(n/352*100),
+            mean_error = mean(n/352*100), sd_error = sd(n/352*100)) %>% 
+  round(2) %>% 
+  print()
+```
+I decide against excluding subjects based on their error rate. The mean error rate is quite low (3.58%) and the highest error rate is 21.88%. This error rate is still quite low and thus does not point to subjects who have not understood the task correctly. I will keep all subjects but filter out incorrect responses later.
 
+### Inspecting the sample: Demographical information about the participants
+1) How many complete sets of data have been collected?
+```{r complete-datasets, echo=FALSE}
+
+# How many complete sets of data?
+total_nr <- df_aat_excs %>% 
+  group_by(subject_id) %>% 
+  summarize () %>% 
+  count() %>% 
+  print()
+# --> 95
+
+```
+2) How many participants were female, how many were male?
+```{r gender, echo=FALSE}
+
+# How many participants were male, how many were female?
+gender_nr <- df_aat_excs %>% 
+  filter (session_nr == 1) %>% # only count one session
+  group_by(subjectgender) %>% 
+  count() 
+
+gender_nr <- gender_nr$n / 176 # divide total count of observations by trial number
+
+female_nr <- gender_nr[1] %>% print() # --> 75 female participants
+male_nr <- gender_nr[2] %>% print() # --> 20 male participants
+
+```
+3) How many participants were right, how many left handed?
+```{r handedness, echo=FALSE}
+
+# How many participants were right, how many left handed?
+handedness_nr <- df_aat_excs %>% 
+  filter(session_nr == 1) %>% 
+  group_by(subjecthand) %>% 
+  count()
+
+handedness_nr <- handedness_nr$n / 176 # divide total count of observations by trial number
+
+right_nr <- handedness_nr[1] %>% print() # 90 were right handed
+left_nr <- handedness_nr[2] %>% print() # 5 were left handed
+
+```
+4) What was the age of the participants?
+```{r age, echo=FALSE}
+
+# What was the mean and median age of the participants?
+age <- df_aat_excs %>% 
+  filter(session_nr == 1 & trial == 1) %>% 
+  summarize(min = min(subjectage), max = max(subjectage), mean = mean(subjectage), sd = sd(subjectage), median = median(subjectage)) %>% 
+  round(2) %>% 
+  print()
+# --> min: 18, max: 35
+# --> mean: 22.95, sd:3.69, median: 22
+
+```
+5) How many days lay between the two sessions?
+```{r days-between, echo=FALSE}
+
+# How many days between sessions?
+
+df_days_between <- df_aat_excs %>% 
+  filter(trial == 1) %>% 
+  select(subject_id, session_nr, year, month, day)
+
+df_1st_session <- df_days_between %>% 
+  filter(session_nr == 1) 
+
+df_2nd_session <- df_days_between %>% 
+  filter(session_nr == 2)
+
+df_days_between_2 <- df_days_between %>% 
+  mutate(years_between = rep(df_2nd_session$year - df_1st_session$year, 2),
+         months_between = rep(df_2nd_session$month - df_1st_session$month, 2),
+         days_between = rep(df_2nd_session$day - df_1st_session$day, 2)) %>% 
+  arrange(subject_id)
+
+df_days_between_3 <- df_days_between_2 %>% 
+  filter(session_nr == 1) %>% # don't need double data for calculation
+  mutate(total_days_between = ifelse(years_between == 0 & months_between == 0, days_between, # if both years_between and months_between are 0, then days_between is the total days between (it's in the same month)
+                                     ifelse(years_between == 0 & months_between == 1, 
+                                            ifelse(month == 11, 30+days_between, 31+days_between), # November has 30 days, January has 31
+                                            ifelse(years_between == 1, 69, 0) # 1 case, manually calculated
+                                            ))) %>% 
+  summarize(mean = mean(total_days_between), sd = sd(total_days_between), median = median(total_days_between)) %>%
+  round(2) %>% 
+  print()
+# --> mean: 3.56, sd: 7.34, median: 2
+
+```
+
+### Further preprocessing PANAS data for mood induction analysis
+The individual responses to the PANAS questionnaire items (20 items, responses were numbers from 1 to 5), are summed up for each participant and condition. This leads to one overall PANAS score for each participant in each experimental condition (negative or positive mood induction, before or after) - well, two actually because the PA and NA scales have to be calculated individually.
 ```{r calc_panas_scores}
-df_affect_scores <- df_affect_exc %>% 
-  group_by(subjectindex, session_nr, mood_induction, panas_nr, item_affect) %>% 
+df_affect_scores <- df_affect_excs %>% 
+  group_by(subject_id, session_nr, mood_induction, panas_nr, item_affect) %>% 
   summarise(panas_score = sum(item_score)) %>% 
   ungroup()
-head(df_affect_scores)
 ```
-#### Visual inspection:
-```{r compare_scores}
-df_affect_agg <- df_affect_scores %>% 
-  group_by(mood_induction, panas_nr, item_affect) %>% 
-  summarise(mean = mean(panas_score)) %>% 
-  ungroup()
-df_affect_agg
+I'm solving this problem (that I have two PANAS scores) by recoding NA scores such that they correspond to negative values on the same axis as the PA scores:
+The data is recoded such that NA scale panas scores receive a negative leading sign.
+```{r recode-scores}
+df_affect_mutate <- df_affect_scores %>% 
+  mutate(panas_score = ifelse(item_affect == "NA", -panas_score, panas_score))
 ```
-```{r plot_mood}
-df_affect_scores %>% 
-  ggplot(aes(x = panas_nr, y = panas_score, color = mood_induction)) + 
-  facet_wrap(item_affect ~ mood_induction) + 
-  geom_point(alpha = 0.1, size = 1,
-             # adding a little bit of jitter to make the points visible
-             position = position_jitter(width = 0.1)) +
-  # adding means and a connecting line in order to make the differences between locations and conditions 
-  # visible
-  geom_point(data = df_affect_agg,
-             aes(x = panas_nr, y = mean, fill = mood_induction), size = 4) +
-  geom_line(data = df_affect_agg,
-            aes(x = panas_nr, y = mean, group = mood_induction))
+```{r aggregate}
+df_affect_agg <- df_affect_mutate %>% 
+  group_by(mood_induction, item_affect, panas_nr) %>% 
+  summarise(mean = round(mean(panas_score), 2),
+            sd = round(sd(panas_score), 2)) %>% 
+  print()
 ```
 
-### AAT data
+### Further preprocessing AAT data
+The AAT data also needs further preprocessing. Here's a plot of the raw data:
 ```{r plot_raw_data, echo=FALSE}
 df_aat_excs %>% 
   ggplot(aes(x = reaction_times)) +
-  geom_histogram(binwidth = 0.1, fill="lightblue", color="blue") + 
+  geom_histogram(binwidth = 100, fill="#DE8F6E", color="#424B54") + 
   labs(
     title = "Raw data",
-    x = "reaction times (s)"
+    x = "reaction times (ms)"
   )
 ```
-```{r exclude}
+
+Exclude practice trials, trials with incorrect responses and trials exhibiting unreasonably small or large reaction times.
+```{r exclude-practice}
 # exclude practice trials (first 4 of each block)
 df_aat_exct <- df_aat_excs %>% 
   filter(trial > 4
          & (trial < 45 | trial > 48)
          & (trial < 89 | trial > 92)
          & (trial < 133 | trial > 136))
-df_aat_raw <- df_aat_exct
-nr_raw <- nrow(df_aat_raw) # %>% print # 23360
-df_aat_exc <- df_aat_raw %>% 
-  filter(correct == "1" & reaction_times > 0.15) #%>%  # only correct responses and reaction times above 150ms will be analysed
-nr_exc <- nrow(df_aat_exc) # %>% print # 22449
-data_exc <- round((1 - nr_exc / nr_raw)*100, 2) # %>% print # 3.9 %
+
+nr_exct <- nrow(df_aat_exct)  #%>% print() # 30400 complete data points
 ```
+```{r exclude-incorrect}
+# exclude trials with incorrect responses
+df_aat_excc <- df_aat_exct %>% 
+  filter(correct == "1") 
+  
+nr_excc <- nrow(df_aat_excc) #%>% print() # 29341
+
+exc_incorrect <- round(((nr_exct - nr_excc) / nr_exct) * 100, 2) #%>% print() # 3.48 %
+# --> 3.48 % of the data had to be excluded because the response was not correct
+```
+```{r exclude-large-small}
+# exclude unreasonably small or large reaction times
+
+# exclude reaction times under 150ms because they are probably artifacts
+df_aat_excRT <- df_aat_excc %>% 
+  filter(reaction_times > 150)
+
+nr_excRT <- nrow(df_aat_excRT) #%>% print() # 29295
+
+
+# what is a sensible upper bound to reaction times? --> 2 to 4 standard deviations above the mean
+
+# trial outliers
+sumstat_reaction_times <- df_aat_excRT %>% 
+  summarize(min_RT = round(min(reaction_times), 2),    # 166.58 ms
+            max_RT = round(max(reaction_times), 2),    # 65479.71 ms
+            mean_RT = round(mean(reaction_times), 2),  # 924.32 ms 
+            sd_RT = round(sd(reaction_times), 2)       # 617.68 ms 
+            ) %>% 
+  print()
+
+mean_RT <- sumstat_reaction_times[3] 	
+sd_RT <- sumstat_reaction_times[4] 
+
+cutoff_RT <- as.numeric((mean_RT + (2.5 * sd_RT))) %>% print() # 2.5 standard deviations above mean: 2468.52
+
+df_aat_exc <- df_aat_excRT %>% 
+  filter(reaction_times < cutoff_RT)
+
+print(nr_excRT - nrow(df_aat_exc)) # --> 449 rows of data excluded
+# 2 standard deviations above mean: cutoff at 2105.64 and 608 rows of data excluded
+# 3 standard deviations above mean: cutoff at         and 294 rows of data excluded
+# 4 standard deviations above mean: cutoff at 3295.47 and 149 rows of data would be excluded
+
+nr_exc <- nrow(df_aat_exc) %>% print() # 28846
+
+# total amount of data excluded:
+total_exc <- round(((nr_exct - nr_exc) / nr_exct) * 100, 2) %>% print() # 5.11 %
+# --> 5.11 % of the data were excluded in total (incorrect responses, too short or too long reaction times)
+
+# final sample:
+df_aat_exc %>% 
+  summarize(min = round(min(reaction_times), 2),   # 166.58
+            max = round(max(reaction_times), 2),   # 2466.31 ms
+            mean = round(mean(reaction_times), 2), # 880.42
+            sd = round(sd(reaction_times), 2)      # 305.64
+            ) %>% 
+  print()
+```
+Here's a plot of the excluded raw data:
+```{r plot_exc_data, echo=FALSE}
+df_aat_exc %>% 
+  ggplot(aes(x = reaction_times)) +
+  geom_histogram(binwidth = 10, fill="#DE8F6E", color="#424B54") + 
+  labs(
+    title = "Excluded raw data",
+    x = "reaction times (ms)"
+  )
+```
+
+Note that the distribution looks like a log-normal distribution with a positive skew and a heavy tail to the right.
+
+For statistical modeling, I'm log-transforming the data such that it (hopefully) fits a normal distribution and I can use a model with a normal link function.
 ```{r log-transform}
 # standardize and log-transform reaction times
 df_aat_log <- df_aat_exc %>% 
   mutate(log_RT = log(reaction_times))
 df_aat_log$log_RT_s <- scale(df_aat_log$log_RT, scale = TRUE)
 ```
-```{r plot2_log_data}
+
+Here's a plot of the log-transformed data superimposed with a perfect normal distribution:
+```{r plot3_log_data, echo=FALSE}
+# parameters that will be passed to ``stat_function``
+mean = mean(df_aat_log$log_RT_s)
+sd = sd(df_aat_log$log_RT_s)
+n = nrow(df_aat_log)
+binwidth = 0.1
+
 df_aat_log %>% 
   ggplot(aes(x = log_RT_s)) +
-  geom_histogram(binwidth = 0.1, fill="lightblue", color="blue") + 
+  geom_histogram(binwidth = binwidth, fill="#DE8F6E", color="#424B54") + 
+  stat_function(fun = function(x) dnorm(x, mean = mean, sd = sd) * n * binwidth,
+    color = "#424B54", size = 1) +
   labs(
     title = "Log-transformed data",
     x = "log(RT)"
   )
 ```
-```{r}
-# creating an aggregated data frame grouped by mood_induction and block with the respective means
-df_aat_agg1 <- df_aat_log %>% 
-  group_by(mood_induction, block) %>% 
-  summarise(mean = mean(log_RT_s))
-
-# plot
-df_aat_log %>% 
-  # plotting both mood_induction and block using facet_wrap
-  ggplot(aes(x = block, y = log_RT_s, color = mood_induction)) +
-  facet_wrap(~ mood_induction) +
-  geom_point(alpha = 0.1, size = 1,
-             # adding a little bit of jitter to make the points visible
-             position = position_jitter(width = 0.1)) +
-  # adding means and a connecting line in order to make the differences between locations and conditions 
-  # visible
-  geom_point(data = df_aat_agg1,
-             aes(x = block, y = mean, fill = mood_induction), size = 4) +
-  geom_line(data = df_aat_agg1,
-            aes(x = block, y = mean, group = mood_induction)) +
-  # custom colours
-  scale_colour_manual(values = c("green4", "red2")) +
-  # axes labels and titles
-  labs(
-    #title = "Effects of mood induction and block (congruent/incongruent)",
-    #subtitle = "Hypotheses 1 & 2",
-    y = "log(RT)"
-  )
-```
-
-```{r}
-log_model <- brm(log_RT_s ~ block * mood_induction, 
-                data = df_aat_log)
-```
-
-```{r}
-log_model
-```
-```{r}
-pp_check(log_model)
-```
-
-```{r}
-log_model_aat <- brm(log_RT_s ~ block,
-                 data = df_aat_log)
-```
-```{r}
-pp_check(log_model_aat)
-```
-
-```{r}
-log_model_aat
-```
-
-```{r}
-#model_max_re <- brm(reaction_times ~ block * mood_induction +
-#                      (1 | trial) +
-#                      (1 | subjectindex) + 
-#                      (1 | stimulus) + 
-#                      (1 | response),
-#                    data = df_aat_prep)
-```
-
-```{r}
-#model_max_re
-```
-
-```{r}
-# model without transformed reaction times
-
-nolog_model <- brm(reaction_times ~ block * mood_induction, 
-                   family = Gamma(log),
-                   data = df_aat_exc)
-```
-```{r}
-nolog_model
-```
-
-```{r}
-pp_check(nolog_model)
-pp_check(log_model)
-```
-
