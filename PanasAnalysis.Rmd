@@ -1,0 +1,389 @@
+---
+title: "Affect-AAT PANAS Model"
+author: "Kristina Kobrock"
+date: "11 3 2022"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, message = FALSE, warning = FALSE)
+```
+```{r libraries, include=FALSE, message=FALSE, warning=FALSE}
+# package to extract R data from matlab files
+library(R.matlab)
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package for plotting (together with ggplot)
+library(ggpubr)
+
+# package to visualize 
+library(bayesplot)
+
+# package to extract CrIs
+library(bayestestR)
+
+# package to extract HDIs
+library(HDInterval)
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+# Green RYB: 5EB045, Barn red: 811F0E, Charcoal: 424B54, maximum yellow red: FFBA49, copper crayola: DE8F6E
+green <- "#5EB045"
+red <- "#811F0E"
+gray <- "#424B54"
+yellow <- "#FFBA49"
+copper <- "#DE8F6E"
+black <- "#000000"
+project_colors = c(red, green, gray, yellow, copper, black)
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
+```
+
+# The role of affect in the Automatic Approach Bias: An empirical investigation.
+
+## Mood induction
+Load the preprocessed data (see DataAnalysis.Rmd for details).
+```{r}
+load("panas.Rdata")
+```
+
+### Was the mood induction successful? 
+1) positive mood induction: panas_score for positive affect higher in panas_2 than in panas_1
+2) negative mood induction: panas_score for negative affect higher in panas_2 than in panas_1
+--> calculate PA and NA panas_scores for each participant
+--> compare and check for statistical significance
+
+### Visual inspection:
+The data is recoded such that NA scale panas scores receive a negative leading sign.
+
+```{r aggregate, echo=FALSE}
+df_affect_agg <- df_affect_mutate %>% 
+  group_by(mood_induction, item_affect, panas_nr) %>% 
+  summarise(mean = round(mean(panas_score), 2),
+            sd = round(sd(panas_score), 2)) %>% 
+  print()
+```
+```{r plot_mood, echo=FALSE}
+df_affect_agg_plot <- df_affect_agg %>% 
+  mutate(panas_nr = ifelse(panas_nr == 1, "(1) before", "(2) after")) %>% 
+  rename(PANAS = item_affect) 
+
+df_affect_plot <- df_affect_mutate %>% 
+  mutate(panas_nr = ifelse(panas_nr == 1, "(1) before", "(2) after")) %>% 
+  rename(PANAS = item_affect) 
+
+plot_mood <- df_affect_plot %>% 
+  ggplot(aes(x = panas_nr, y = panas_score, color = PANAS)) + 
+  facet_wrap(~ mood_induction) + 
+  geom_point(alpha = 0.1, size = 1,
+             # adding a little bit of jitter to make the points visible
+             position = position_jitter(width = 0.1)) +
+  # adding means and a connecting line in order to make the differences between locations and conditions   # visible
+  geom_point(data = df_affect_agg_plot,
+             aes(x = panas_nr, y = mean, fill = mood_induction), size = 4) +
+  geom_line(data = df_affect_agg_plot,
+            aes(x = panas_nr, y = mean, group = PANAS)) +
+  # suppress legend:
+  guides(fill = "none") +
+  # axes labels and titles
+  labs(
+    title = "Mood induction",
+    subtitle = "by positive/negative affect scores (PA/NA)",
+    x = "Mood induction",
+    y = "PANAS affect score"
+  ) 
+
+plot_mood
+```
+
+There are some observed differences in means between the groups. Notably, after negative mood induction, not only NA is elevated, but also PA. The differences after positive mood induction do not seem to be as pronounced as after negative mood induction, but here as well both PA and NA seem to be elevated.
+
+### Statistical model
+```{r panas_model, include=FALSE}
+# predicting panas_score by the valence of the mood_induction (positive/negative) and panas_nr (before or after the mood induction)
+
+priors = priors <- c(
+  set_prior("normal(-22, 5)", class = "Intercept"), # prior informed by the data (NA means are between -20.83 and -23.62), but with a wide standard deviation
+  set_prior("normal(44, 5)", class = "b", coef = "item_affectPA"), # prior informed by the data (PA means are between 20.47 and 24.52)
+  set_prior("normal(0, 10)", class = "b"), # agnostic priors for all other fixed effects
+  # weakly informative prior for all SDs including the varying intercepts and slopes for both groupings
+  set_prior("student_t(3, 0, 5)", class = "sd")
+)
+# item_affect is not of further interest here, but needs to be included in the model so that it can estimate the correct PA/NA scales
+panas_model <- brm(panas_score ~ item_affect * panas_nr * mood_induction # three-way interaction: the effects of item_affect, panas_nr and mood_induction all depend on each other
+                   #+ () # I should include the items itself as group-level effects, but that's not possible because I already summarized the score. Maybe I can check in another way whether certain items had specific influence on the item scores (and thus on the final scores)
+                   #+ (1 | session_nr) # session_nr could be included, but I don't think that it will make a difference and its already randomized in my sample via different groups
+                   + (item_affect * panas_nr * mood_induction || subject_id), # subject_id is included as different people might be more or less receptive to the mood induction (correlation does not seem to be important)
+                   #+ (1 + panas_nr + mood_induction | subjectgender) # gender could also be included for the same reason as above (but my planned more in-depth analysis on this question later will show whether this assumption is warranted)
+                   prior = priors,
+                   iter = 6000, # need to run more chains because the group-level effects have so many parameters
+                   seed = 305,
+                   data = df_affect_mutate,
+                   file = "panas_model")
+```
+I didn't specify any model specific priors beforehand but used the default priors instead. For the coefficient priors I decided for priors slightly informed by the data but agnostic to the hypotheses.
+
+```{r panas_model-summary, echo=FALSE}
+summary(panas_model, priors=TRUE)
+```
+
+The model converged with effective samples sizes far above 1.000 and all Rhat values = 1.00. The intercept corresponds to the NA score before a negative mood induction. The effect of item_affectPA is no effect, but rather due to the coding of the panas_score variable I chose where PA scores have a positive leading sign and NA scores a negative leading sign. So this can be read as a second intercept (which is calculated by adding it to the model intercept) that corresponds to the PA score before a negative mood induction. There is an effect for panas_nr2 that can be read directly from the population-level effects. It means that after negative mood induction, the NA score is elevated (i.e. more negative) by an amount of about 2.75. Another effect seems to lie in the three-way interaction. But in order to interpret it, the individual posteriors have to be grouped and summed up.
+Posterior predictive checks also show that the model converged nicely to the bimodal distribution of PANAS score:
+```{r pp-check, echo=FALSE}
+pp_check(panas_model, ndraws = 50, type = "dens_overlay")
+```
+ 
+```{r plot-posteriors, include=FALSE}
+# my model: panas_score ~ item_affect * panas_nr * mood_induction
+
+posteriors_panas_model <- panas_model %>%
+  spread_draws(b_Intercept, b_item_affectPA,
+               b_panas_nr2, b_mood_inductionpositive, 
+               `b_item_affectPA:panas_nr2`, `b_item_affectPA:mood_inductionpositive`,
+               `b_panas_nr2:mood_inductionpositive`,           
+               `b_item_affectPA:panas_nr2:mood_inductionpositive` 
+               ) %>% 
+  mutate(NAbeforeNegind = b_Intercept,
+         NAafterNegind = b_Intercept + b_panas_nr2,
+         PAbeforeNegind = b_Intercept + b_item_affectPA,
+         PAafterNegind = b_Intercept + b_item_affectPA + b_panas_nr2 + `b_item_affectPA:panas_nr2`,
+         NAbeforePosind = b_Intercept + b_mood_inductionpositive,
+         NAafterPosind = b_Intercept + b_panas_nr2 + b_mood_inductionpositive +   
+                         `b_panas_nr2:mood_inductionpositive`,
+         PAbeforePosind = b_Intercept + b_item_affectPA + b_mood_inductionpositive + 
+                          `b_item_affectPA:mood_inductionpositive`,
+         PAafterPosind = b_Intercept + b_item_affectPA + b_panas_nr2 + b_mood_inductionpositive + 
+                        `b_item_affectPA:panas_nr2` + `b_item_affectPA:mood_inductionpositive` + 
+                        `b_panas_nr2:mood_inductionpositive` + 
+                        `b_item_affectPA:panas_nr2:mood_inductionpositive`
+         ) %>% 
+  dplyr::select(NAbeforeNegind, NAafterNegind,
+                PAbeforeNegind, PAafterNegind,
+                NAbeforePosind, NAafterPosind,
+                PAbeforePosind, PAafterPosind
+                ) %>% 
+  gather(key = "parameter", value = "posterior") %>% 
+  mutate(mood_induction = ifelse(parameter == "NAbeforeNegind" | parameter == "NAafterNegind" | 
+                                   parameter == "PAbeforeNegind" | parameter == "PAafterNegind",
+                        "negative", "positive"),
+         panas_nr = ifelse(parameter == "NAbeforeNegind" | parameter == "PAbeforeNegind" |
+                           parameter == "NAbeforePosind" | parameter == "PAbeforePosind",
+                        "(1) before", "(2) after"),
+         item_affect = ifelse(parameter == "NAbeforeNegind" | parameter == "NAafterNegind" |
+                                parameter == "NAbeforePosind" | parameter == "NAafterPosind",
+                              "NA", "PA")) 
+
+posteriors_plot <- posteriors_panas_model %>% 
+  rename(PANAS = item_affect)
+
+# plot posteriors
+plot <- posteriors_plot %>% 
+  mutate(PANAS = factor(PANAS, c("PA", "NA"))) %>% # I want PA to be in the grid above NA
+  ggplot(aes(x = posterior, 
+           fill = PANAS)) + 
+  scale_color_manual(values = c(gray, yellow)) +
+  scale_fill_manual(values = c(green, red)) +
+  geom_density(aes(color = panas_nr),
+               alpha = 0.5, size = 0.75, trim = F) +
+  guides(color = "none") +
+  facet_grid(PANAS~mood_induction) +
+  xlim(-40, 40) +
+  ylim(0, 0.8)
+
+legend <- get_legend(plot)
+```
+
+Calculating the difference distributions of both PA and NA scores before and after the respective mood inductions.
+```{r difference-distributions, echo=FALSE}
+# calculate the difference distributions:
+
+# NA score:
+# before negative mood induction:
+NAbeforeNegind <- posteriors_panas_model %>%
+  filter(parameter == "NAbeforeNegind") %>% 
+  select(posterior)
+# after negative mood induction:
+NAafterNegind <- posteriors_panas_model %>% 
+  filter(parameter == "NAafterNegind") %>% 
+  select(posterior)
+
+NAdiffNegind <- NAafterNegind - NAbeforeNegind
+
+# PA score:
+# before negative mood induction:
+PAbeforeNegind <- posteriors_panas_model %>% 
+  filter(parameter == "PAbeforeNegind") %>% 
+  select(posterior)
+# after negative mood induction:
+PAafterNegind <- posteriors_panas_model %>% 
+  filter(parameter == "PAafterNegind") %>% 
+  select(posterior)
+
+PAdiffNegind <- PAafterNegind - PAbeforeNegind
+
+plot_1 <- NAdiffNegind %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = red, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=black) +
+  geom_vline(aes(xintercept = hdi(posterior)[1])) +
+  geom_vline(aes(xintercept = hdi(posterior)[2])) +
+  labs(
+    x = ""
+  )
+
+plot_2 <- PAdiffNegind %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = green, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=black) +
+  geom_vline(aes(xintercept = hdi(posterior)[1])) +
+  geom_vline(aes(xintercept = hdi(posterior)[2])) +
+  labs(
+    x = "negative mood induction"
+  ) +
+  ylim(0, 0.8)
+
+# positive mood induction
+# NA score:
+# before negative mood induction:
+NAbeforePosind <- posteriors_panas_model %>%
+  filter(parameter == "NAbeforePosind") %>% 
+  select(posterior)
+# after negative mood induction:
+NAafterPosind <- posteriors_panas_model %>% 
+  filter(parameter == "NAafterPosind") %>% 
+  select(posterior)
+
+NAdiffPosind <- NAafterPosind - NAbeforePosind
+
+# PA score:
+# before negative mood induction:
+PAbeforePosind <- posteriors_panas_model %>% 
+  filter(parameter == "PAbeforePosind") %>% 
+  select(posterior)
+# after negative mood induction:
+PAafterPosind <- posteriors_panas_model %>% 
+  filter(parameter == "PAafterPosind") %>% 
+  select(posterior)
+
+PAdiffPosind <- PAafterPosind - PAbeforePosind
+
+plot_3 <- NAdiffPosind %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = red, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=black) +
+  geom_vline(aes(xintercept = hdi(posterior)[1])) +
+  geom_vline(aes(xintercept = hdi(posterior)[2])) +
+  labs(
+    x = ""
+  ) +
+  ylim(0, 0.8)
+
+plot_4 <- PAdiffPosind %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = green, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=black) +
+  geom_vline(aes(xintercept = hdi(posterior)[1])) +
+  geom_vline(aes(xintercept = hdi(posterior)[2])) +
+  labs(
+    x = "positive mood induction"
+  )
+
+ggarrange(ggarrange(plot_2, plot_1, nrow=2), ggarrange(plot_4, plot_3, nrow=2), legend = "top", legend.grob = legend, heights = c(1,1))
+```
+
+All differences seem to be substantial except for NA in the positive mood induction condition. Here are summaries of the medians, 95% credible intervals, probability of direction and ROPE test:
+ROPE stands for "Region of practical equivalence" and defines a region that can be assumed to be equivalent to zero for a given dataset (one common practice is to calculate the rope range using the tenth of the standard deviation of the response variable according to Cohen, 1988). The result of a ROPE test can be interpreted as follows:
+
+    > 99% in ROPE: negligible (we can accept the null hypothesis)
+    > 97.5% in ROPE: probably negligible
+    <= 97.5% & >= 2.5% in ROPE: undecided significance
+    < 2.5% in ROPE: probably significant
+    < 1% in ROPE: significant (we can reject the null hypothesis)
+
+The probability of direction is strongly correlated with the p-value from frequentist statistics: 
+
+    pd <= 95% ~ p > .1: uncertain
+    pd > 95% ~ p < .1: possibly existing
+    pd > 97.5% ~ p < .05: likely existing
+    pd > 99.5% ~ p < .01 probably existing
+    pd > 99.9% ~ p< .001 certainly existing
+
+
+```{r bayestests, echo=FALSE}
+panas_rope_range = rope_range(panas_model) # calculates the rope range using the tenth (1/10 = 0.1) of the standard deviation (SD) of the response variable (panas_score), which can be considered as a “negligible” effect size (Cohen, 1988)
+
+print("PA difference for negative mood induction:")
+posterior_PAdiffNegind <- describe_posterior(PAdiffNegind, centrality = "median", ci = 0.95, ci_method = "hdi", rope_range = panas_rope_range, rope_ci = 0.95) %>% print()
+
+print("NA difference for negative mood induction:")
+posterior_NAdiffNegind <- describe_posterior(NAdiffNegind, rope_range = panas_rope_range) %>% print()
+
+print("PA difference for positive mood induction:")
+posterior_PAdiffPosind <- describe_posterior(PAdiffPosind, rope_range = panas_rope_range) %>% print()
+
+print("NA difference for positive mood induction:")
+posterior_NAdiffPosind <- describe_posterior(NAdiffPosind, rope_range = panas_rope_range) %>% print()
+```
+
+Let's first consider the difference in panas score when after compared to before a negative mood induction: Other than I would have expected, the difference in PA score before compared to after the negative mood induction is substantial. The effect has a probability of 100% of being positive (i.e. PA is elevated) (median = 3.34, 95% CrI [2.32, 4.31] and can be considered as significant (0% in ROPE). The difference in NA score is also substantial. The effect has a probability of 100% of being negative (i.e. NA is elevated) (median = -2.75, 95% CrI [-3.75, -1.76]). With a quite wide ROPE range informed by the posterior distribution (one tenth of the standard deviation which can be assumed to be negligible accordig to Cohen, 1988), the effect would not be significant (14.75% in ROPE). But according to the probability of direction, there is high certainty for the effect, so I'm assuming that it is, in fact, present and I just chose a quite strict ROPE range.
+
+Next, let's have a look at positive mood induction: Positive mood induction did not have such strong effects as negative mood induction. Here, again, we find quite some evidence for a difference in PA score (median = 1.93, 95% CrI [0.94, 2.96]). The probability of the effect being positive (i.e. PA is elevated) is 99.98%. Again, according to the ROPE interval I chose, the effect cannot be regarded as significant, but I will still assume that there is enough evidence for the effect. NA difference is not substantial as already suggested by the posterior difference plots. The effect has a probability of 92.59% of being negative (median = -0.74, 95% CrI [-1.77, 0.23]) and is not significant (100% in ROPE).
+
+```{r hdi-plot, echo=FALSE}
+plot_posteriors_hdi <- posteriors_plot %>%  
+  mutate(mood_induction = ifelse(parameter == "NAbeforeNegind" | parameter == "NAafterNegind" | 
+                                   parameter == "PAbeforeNegind" | parameter == "PAafterNegind",
+                        "negative", "positive"),
+         panas_nr = ifelse(parameter == "NAbeforeNegind" | parameter == "PAbeforeNegind" |
+                           parameter == "NAbeforePosind" | parameter == "PAbeforePosind",
+                        "(1) before", "(2) after"),
+         item_affect = ifelse(parameter == "NAbeforeNegind" | parameter == "NAafterNegind" |
+                                parameter == "NAbeforePosind" | parameter == "NAafterPosind",
+                              "NA", "PA")) %>% 
+  group_by(parameter, mood_induction, panas_nr, PANAS) %>%
+  summarise(pred_m = mean(posterior, na.rm = TRUE),
+            pred_low = HDInterval::hdi(posterior, credMass = 0.95)[1],
+            pred_high = HDInterval::hdi(posterior, credMass = 0.95)[2]) %>%
+  print()
+
+
+ggplot(plot_posteriors_hdi, 
+       aes(x = panas_nr, y = pred_m,
+           color = PANAS, fill = PANAS)) +
+  facet_wrap(~ mood_induction) + 
+  geom_errorbar(aes(ymin = pred_low, ymax = pred_high), 
+                color = "grey",
+                width = 2,
+                position = position_dodge(0.2)) +
+  geom_point(size = 4, 
+             position = position_dodge(0.2)) +
+  geom_line(aes(group = PANAS),
+            position = position_dodge(0.2)) +
+  geom_point(data = df_affect_plot, aes(x = panas_nr, y = panas_score, color = PANAS), alpha = 0.1, size = 1,
+             # adding a little bit of jitter to make the points visible
+             position = position_jitter(width = 0.1)) +
+  labs(y = "PANAS affect score",
+       x = "Mood induction",
+       title = "Comparing data and model predictions") +
+  scale_y_continuous(breaks = scales::pretty_breaks()) 
+  
+```
