@@ -371,13 +371,11 @@ ggplot(plot_posteriors_hdi,
            color = PANAS, fill = PANAS)) +
   facet_wrap(~ mood_induction) + 
   geom_errorbar(aes(ymin = pred_low, ymax = pred_high), 
-                color = "grey",
-                width = 2,
-                position = position_dodge(0.2)) +
-  geom_point(size = 4, 
-             position = position_dodge(0.2)) +
-  geom_line(aes(group = PANAS),
-            position = position_dodge(0.2)) +
+                color = "gray",
+                #size = 1,
+                width = 0.4) +
+  geom_point(size = 4) +
+  geom_line(aes(group = PANAS)) +
   geom_point(data = df_affect_plot, aes(x = panas_nr, y = panas_score, color = PANAS), alpha = 0.1, size = 1,
              # adding a little bit of jitter to make the points visible
              position = position_jitter(width = 0.1)) +
