@@ -1,0 +1,542 @@
+---
+title: "Affect-AAT model with 2 blocks only"
+author: "Kristina Kobrock"
+date: "14 3 2022"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, message = FALSE, warning = FALSE)
+```
+```{r libraries, include=FALSE, message=FALSE, warning=FALSE}
+# package to extract R data from matlab files
+library(R.matlab)
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package for plotting (together with ggplot)
+library(ggpubr)
+
+# package to visualize 
+library(bayesplot)
+
+# package to extract CrIs
+library(bayestestR)
+
+# package to extract HDIs
+library(HDInterval)
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+# Green RYB: 5EB045, Barn red: 811F0E, Charcoal: 424B54, maximum yellow red: FFBA49, copper crayola: DE8F6E
+green <- "#5EB045"
+red <- "#811F0E"
+gray <- "#424B54"
+yellow <- "#FFBA49"
+copper <- "#DE8F6E"
+black <- "#000000"
+project_colors = c(red, green, gray, yellow, copper, black)
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
+```
+```{r backtransform-function, echo=FALSE}
+backtransform_RT <- function(list, df=df_aat_log1) {
+  round(exp(list * attr(df$log_RT_s, 'scaled:scale') + attr(df$log_RT_s, 'scaled:center')),2)
+}
+```
+
+# The role of affect in the Automatic Approach Bias: An empirical investigation.
+
+## The effect of mood induction in the AAB
+
+### How long does a mood induction hold?
+
+### Analysis with two instead of four blocks per session
+I'm conducting the same preprocessing steps as in the main analysis.
+```{r read_data, echo=FALSE}
+files_1stsession = file.path("./data/1stsession",  list.files(path="./data/1stsession", pattern=".mat$"))
+files_2ndsession = file.path("./data/2ndsession", list.files(path="./data/2ndsession", pattern=".mat$"))
+session_1 <- lapply(files_1stsession, readMat)
+session_2 <- lapply(files_2ndsession, readMat)
+```
+```{r preprocess_function_aat, echo=FALSE}
+preprocess_aat <- function(data) {
+  
+  subject_id <- data$subject.index # unique subject ID
+  subjectname <- data$subject.name # subject initials
+  subjectage <- data$subject.age 
+  subjectgender <- data$subject.gender
+  subjecthand <- data$subject.hand # subject handedness, i.e. the dominant hand used for writing
+  timestamp <- data$subject.date # time log
+  session_nr <- data$subject.session # 1 or 2
+  mood_induction <- data$mood.induction # positive (p) or negative (n)
+
+  block_order <- data$category # block order: a=congruent-incongruent, b=incongruent-congruent
+  if (block_order == 'a') {
+    condition <- c(rep(c("congruent", "incongruent", "congruent", "incongruent"), times=c(44,44,44,44)))  
+  }
+  else {
+    condition <- c(rep(c("incongruent", "congruent", "incongruent", "congruent"), times=c(44,44,44,44)))
+  }
+  
+  # sequences: picture order (number 1-44 are positive, 45-88 are negative pictures)
+  sequence_1 <- c()
+  sequence_2 <- c()
+  for (i in 1:176){
+    if ((i %% 2) != 0){
+      sequence_1 <- c(sequence_1, data$sequences[[i]])
+    }
+    else {
+      sequence_2 <- c(sequence_2, data$sequences[[i]])
+    }
+  }
+  pushtimes <- data$pushtimes # only push trials
+  pulltimes <- data$pulltimes # only pull trials
+  alltimes <- data$alltimes # all reaction times
+
+
+  df <- data.frame(subject_id = rep(as.numeric(as.character(subject_id)), 176),
+                   subjectname = rep(subjectname, 176),
+                   subjectgender = rep(subjectgender, 176),
+                   subjectage = rep(as.numeric(as.character(subjectage)), 176), # convert from factor to numeric vector
+                   subjecthand = rep(subjecthand, 176),
+                   timestamp = rep(timestamp, 176),
+                   date = rep(substr(timestamp, 1, 10), 176),
+                   year = rep(as.numeric(as.character(substr(timestamp, 1, 4))), 176), # extract year as double
+                   month = rep(as.numeric(as.character(substr(timestamp, 6,7))), 176), # extract month as double
+                   day = rep(as.numeric(as.character(substr(timestamp, 9, 10))), 176), # extract day as double
+                   session_nr = rep(session_nr, 176),
+                   mood_induction = rep(mood_induction, 176),
+                   block_order = rep(block_order, 176),
+                   trial = c(1:176),
+                   condition = condition,
+                   pictures = c(sequence_1, sequence_2),
+                   response = pushtimes[1:176],
+                   pushtimes = pushtimes[1:176],
+                   pulltimes = pulltimes[1:176],
+                   reaction_times = alltimes[1:176] * 1000) %>% # change scaling to ms
+    mutate(stimulus = ifelse(pictures <= 44, "positive", "negative"),
+           response = ifelse(response == 0, "pull", "push"),
+           correct = ifelse(((condition == "congruent" & stimulus == "positive" & response == "pull") |
+                               (condition == "congruent" & stimulus == "negative" & response == "push") |
+                               (condition == "incongruent" & stimulus == "positive" & response == "push") |
+                               (condition == "incongruent" & stimulus == "negative" & response == "pull")), 1, 0))
+}
+```
+```{r preprocessing, include=FALSE}
+df_aat <- data.frame()
+for (data_file in session_1) {
+  df_single <- data.frame(data_file$subjectdata)[[1]]
+  df_aat <- rbind(df_aat, preprocess_aat(df_single)) # binds data from each data file together
+}
+for (data_file in session_2) {
+  df_single <- data.frame(data_file$subjectdata)[[1]]
+  df_aat <- rbind(df_aat, preprocess_aat(df_single)) # binds also the second session data to the large dataframe
+}
+head(df_aat)
+```
+```{r exclude-subjects, include=FALSE}
+# check whether for each subjectindex is data available from two sessions and two mood inductions (and the same block order)
+df_aat_check <- df_aat %>% 
+  group_by(subject_id, session_nr, mood_induction, block_order) %>% 
+  summarize() 
+
+# only keep data when data from both sessions is available and no measurement errors occured
+df_aat_excs <- df_aat %>% 
+  filter(subject_id != 8     # data from 1st session is missing
+         & subject_id != 10  # participant didn't fulfill the criteria
+         & subject_id != 16  # 2nd session data is missing
+         & subject_id != 24  # 2nd session data is missing
+         & subject_id != 33  # measurement error (wrong condition)
+         & subject_id != 50) # 2nd session data is missing
+
+df_aat_excs %>% group_by(subject_id, session_nr, mood_induction, block_order) %>% 
+  summarize() #%>% 
+  #print()
+
+```
+
+The two last blocks are excluded.
+```{r exclude-last-blocks, echo=FALSE}
+# exclude last two blocks
+df_aat_excb <- df_aat_excs %>% 
+  filter(trial < 89)
+```
+
+```{r exclude-practice, echo=FALSE}
+# exclude practice trials (first 4 of each block)
+df_aat_exct <- df_aat_excb %>% 
+  filter(trial > 4
+         & (trial < 45 | trial > 48)
+         #& (trial < 89 | trial > 92)
+         #& (trial < 133 | trial > 136)
+         )
+
+nr_exct <- nrow(df_aat_exct)  #%>% print() # 15200 complete data points
+```
+After having excluded the practice trials, this still leaves us with 15.200 observations.
+```{r exclude-incorrect, include=FALSE}
+# exclude trials with incorrect responses
+df_aat_excc <- df_aat_exct %>% 
+  filter(correct == "1") 
+  
+nr_excc <- nrow(df_aat_excc) %>% print() # 14659
+
+exc_incorrect <- round(((nr_exct - nr_excc) / nr_exct) * 100, 2) %>% print() # 3.56 %
+# --> 3.56 % of the data had to be excluded because the response was not correct
+```
+```{r exclude-large-small, include=FALSE}
+# exclude unreasonably small or large reaction times
+
+# exclude reaction times under 150ms because they are probably artifacts
+df_aat_excRT <- df_aat_excc %>% 
+  filter(reaction_times > 150)
+
+nr_excRT <- nrow(df_aat_excRT) %>% print() # 14628
+
+
+# what is a sensible upper bound to reaction times? --> 2 to 4 standard deviations above the mean
+
+# trial outliers
+sumstat_reaction_times <- df_aat_excRT %>% 
+  summarize(min_RT = round(min(reaction_times), 2),    # 166.58 ms
+            max_RT = round(max(reaction_times), 2),    # 65479.71 ms
+            mean_RT = round(mean(reaction_times), 2),  # 967.67	ms 
+            sd_RT = round(sd(reaction_times), 2)       # 759.19	ms 
+            ) %>% 
+  print()
+
+mean_RT <- sumstat_reaction_times[3] 	
+sd_RT <- sumstat_reaction_times[4] 
+
+cutoff_RT <- as.numeric((mean_RT + (2.5 * sd_RT))) %>% print() # 2.5 standard deviations above mean: 2865.645
+
+df_aat_exc <- df_aat_excRT %>% 
+  filter(reaction_times < cutoff_RT)
+
+print(nr_excRT - nrow(df_aat_exc)) # --> 148 rows of data excluded
+
+nr_exc <- nrow(df_aat_exc) %>% print() # 14444
+
+# total amount of data excluded:
+total_exc <- round(((nr_exct - nr_exc) / nr_exct) * 100, 2) %>% print() # 4.97 %
+# --> 4.97 % of the data were excluded in total (incorrect responses, too short or too long reaction times)
+
+# final sample:
+df_aat_exc %>% 
+  summarize(min = round(min(reaction_times), 2),   # 166.58
+            max = round(max(reaction_times), 2),   # 2861.68 ms
+            mean = round(mean(reaction_times), 2), # 922.52
+            sd = round(sd(reaction_times), 2)      # 349.6
+            ) %>% 
+  print()
+```
+After having excluded all incorrect trials and trials with unreasonably short or large reaction times, I'm left with 14.444 observations. Reaction times range between 155.58ms and 2861.68 (mean=922.52, sd=349.6) which is comparable to the main analysis.
+```{r log-transform, echo=FALSE}
+# standardize and log-transform reaction times
+df_aat_log <- df_aat_exc %>% 
+  mutate(log_RT = log(reaction_times))
+df_aat_log$log_RT_s <- scale(df_aat_log$log_RT, scale = TRUE)
+```
+```{r data-log-model, echo=FALSE}
+df_aat_log1 <- df_aat_log %>% 
+  mutate(mood_induction = factor(ifelse(mood_induction == "p", "positive", "negative")),
+         condition = factor(condition)) %>% 
+  select(subject_id, trial, condition, mood_induction, log_RT_s, pictures, stimulus, response)
+head(df_aat_log1)
+```
+Log-transformed normal model with same specifications as before (same priors and group-level effects for subject_id) for 4000 iterations:
+```{r two-block-model, echo=FALSE}
+priors <- c(set_prior("student_t(3, 0, 3)", class = "Intercept"), # model-specific parameters weakly informed by the data
+                      set_prior("student_t(3, 0, 3)", class = "sigma"),
+                      set_prior("normal(0, 10)", class = "b"), # agnostic prior on fixed effects
+                      set_prior("student_t(3, 0, 3)", class = "sd") # weakly informative prior on random effects
+                      ) 
+
+fit_2block <- brm(log_RT_s ~ condition * mood_induction 
+                    + (condition * mood_induction || subject_id), # I expect individual differences (varying intercepts and slopes) between subjects with regards to both the mood induction and the conditions (but no correlation)
+                 data = df_aat_log1,
+                 family = gaussian(),
+                 prior = priors_log_model,     
+                 iter = 4000, 
+                 cores = getOption("mc.cores", 2), # specify number according to hardware used (up to nr of chains)
+                 seed = 1003,
+                 file = "two_block_model"
+                 )
+```
+Notably, the two block model converges more easily when including group-level effects for subject_id:
+```{r}
+summary(fit_2block, priors=TRUE)
+```
+Results look similar to the main analysis. The hypothesis tests also confirm that for both mood induction conditions, reaction times are longer in the incongruent than in the congruent condition. Notably, this model converges after fewer iterations.
+
+```{r extract-posteriors, echo=FALSE}
+posteriors_2block <- fit_2block %>%
+  # just taking the population level effects here
+  spread_draws(b_Intercept, b_conditionincongruent,
+               b_mood_inductionpositive, `b_conditionincongruent:mood_inductionpositive`) %>% 
+  mutate(
+    congruent_negative = b_Intercept,
+    incongruent_negative = b_Intercept + b_conditionincongruent,
+    congruent_positive = b_Intercept + b_mood_inductionpositive,
+    incongruent_positive = b_Intercept + b_conditionincongruent + 
+      b_mood_inductionpositive + `b_conditionincongruent:mood_inductionpositive` 
+    ) %>% 
+  dplyr::select(congruent_negative, incongruent_negative,
+                congruent_positive, incongruent_positive) %>%
+  gather(key = "parameter", value = "posterior")
+
+```
+```{r plot-hdi-posteriors-2block, echo=FALSE}
+# Extract the posteriors
+posteriors <- posteriors_2block %>% 
+  group_by(parameter) %>% 
+  summarise(mean_posterior = mean(posterior),
+            `95lowerCrI` = HDInterval::hdi(posterior, credMass = 0.95)[1],
+            `95higherCrI` = HDInterval::hdi(posterior, credMass = 0.95)[2])
+
+posteriors <- posteriors %>% 
+  mutate(condition = ifelse(parameter == "congruent_negative" | parameter == "congruent_positive",
+                            "congruent", "incongruent"),
+         mood_induction = ifelse(parameter == "congruent_negative" | parameter == "incongruent_negative",
+                                 "negative", "positive")
+  ) %>% 
+  select(mood_induction, condition, mean_posterior, `95lowerCrI`, `95higherCrI`) 
+
+# plot
+ggplot(data = posteriors, 
+       aes(x = condition, y = mean_posterior,
+           color = mood_induction, fill = mood_induction)) + 
+  geom_errorbar(aes(ymin = `95lowerCrI`, ymax = `95higherCrI`),
+                width = 0.2, color = "grey") +
+  geom_line(aes(group = 1)) +
+  geom_point(size = 5) +
+  facet_grid(~mood_induction) +
+  guides(color = "none", fill = "none") +
+  labs(x = "condition by mood induction",
+       y = "posterior log(RT) (scaled)",
+       title = "Posterior estimates with credible intervals")
+```
+
+Compared to the main analysis, here the rather flat slope indicating the AAB after positive mood induction attracts attention. In light of the two hypotheses from the preregistration, this result would be at least as suprising as the result from the main analysis: Not in the negative mood induction condition as predicted but in the positive mood induction condition, is the AAB leveled out! 
+```{r differences, echo=FALSE}
+
+# difference between congruent and incongruent condition regardless of mood induction:
+
+# congruent condition:
+post_congruent <- posteriors_2block %>% 
+  filter(parameter == "congruent_negative" | parameter == "congruent_positive") %>% 
+  select(posterior) 
+
+# incongruent condition:
+post_incongruent <- posteriors_2block %>% 
+  filter(parameter == "incongruent_negative" | parameter == "incongruent_positive") %>% 
+  select(posterior) 
+
+diff_condition <- post_incongruent - post_congruent # positive when RTs in incongruent cond are longer than congruent (as expected)
+
+
+# negative mood induction:
+post_congruent_negMI <- posteriors_2block %>% 
+  filter(parameter == "congruent_negative") %>% 
+  select(posterior) 
+
+post_incongruent_negMI <- posteriors_2block %>% 
+  filter(parameter == "incongruent_negative") %>% 
+  select(posterior)
+
+diff_condition_negMI <- post_incongruent_negMI - post_congruent_negMI # positive when RTs in incongruent condition longer
+
+# positive mood induction:
+post_congruent_posMI <- posteriors_2block %>% 
+  filter(parameter == "congruent_positive") %>% 
+  select(posterior)
+
+post_incongruent_posMI <- posteriors_2block %>% 
+  filter(parameter == "incongruent_positive") %>% 
+  select(posterior) 
+
+diff_condition_posMI <- post_incongruent_posMI - post_congruent_posMI # positive when RTs in incongruent cond are longer than congruent (as expected)
+
+```
+```{r plot-2block-difference, echo=FALSE}
+plot_1 <- diff_condition %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = yellow, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "condition posterior difference"
+  ) +
+  ylim(0, 13) +
+  xlim(-0.1, 0.25)
+
+plot_2 <- diff_condition_negMI %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = red, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "after negative mood ind."
+  ) +
+  ylim(0, 13) +
+  xlim(-0.1, 0.25)
+
+plot_3 <- diff_condition_posMI %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = green, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "after positive mood ind."
+  ) +
+  ylim(0, 13) +
+  xlim(-0.1, 0.25)
+
+ggarrange(plot_1, ggarrange(plot_2, plot_3, ncol=2), nrow=2)
+```
+
+Indeed, the difference between congruent and incongruent condition, i.e. the AAB, is not significant after positive mood induction but only after negative mood induction.
+```{r difference-in-ms, echo=FALSE}
+# transform all posterior estimates to the ms scale:
+post_congruent_ms <- backtransform_RT(post_congruent)
+post_incongruent_ms <- backtransform_RT(post_incongruent)
+diff_condition_ms <- post_incongruent_ms - post_congruent_ms
+
+post_incongruent_negMI_ms <- backtransform_RT(post_incongruent_negMI)
+post_congruent_negMI_ms <- backtransform_RT(post_congruent_negMI)
+diff_condition_negMI_ms <- post_incongruent_negMI_ms - post_congruent_negMI_ms
+
+post_incongruent_posMI_ms <- backtransform_RT(post_incongruent_posMI)
+post_congruent_posMI_ms <- backtransform_RT(post_congruent_posMI)
+diff_condition_posMI_ms <- post_incongruent_posMI_ms - post_congruent_posMI_ms
+
+```
+```{r plot-2block-differences-ms, echo=FALSE}
+plot_1 <- diff_condition_ms %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = yellow, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "condition posterior difference [ms]"
+  ) +
+  ylim(0, 0.05)
+
+plot_2 <- diff_condition_negMI_ms %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = red, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "after negative mood ind."
+  ) +
+  ylim(0, 0.05) +
+  xlim(-30, 60)
+
+plot_3 <- diff_condition_posMI_ms %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = green, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "after positive mood ind."
+  ) +
+  ylim(0, 0.05) +
+  xlim(-30, 60)
+
+ggarrange(plot_1, ggarrange(plot_2, plot_3, ncol=2), nrow=2)
+```
+```{r describe-differences-ms, echo=FALSE}
+
+df_diffcondition <- data.frame(
+  posteriors = "condition difference",
+  median = median(diff_condition_ms$posterior),
+  CrI_lower = HDInterval::hdi(diff_condition_ms$posterior)[1],
+  CrI_upper = HDInterval::hdi(diff_condition_ms$posterior)[2]
+)
+df_diffnegMI <- data.frame(
+  posteriors = "difference after negative mood induction",
+  median = median(diff_condition_negMI_ms$posterior),
+  CrI_lower = HDInterval::hdi(diff_condition_negMI_ms$posterior)[1],
+  CrI_upper = HDInterval::hdi(diff_condition_negMI_ms$posterior)[2]
+)
+df_diffposMI <- data.frame(
+  posteriors = "difference after positive mood induction",
+  median = median(diff_condition_posMI_ms$posterior),
+  CrI_lower = HDInterval::hdi(diff_condition_posMI_ms$posterior)[1],
+  CrI_upper = HDInterval::hdi(diff_condition_posMI_ms$posterior)[2]
+)
+
+differences_in_ms <- tibble(rbind(
+  df_diffcondition,
+  df_diffnegMI,
+  df_diffposMI
+))
+
+differences_in_ms
+```
+
+```{r bayestests, echo=FALSE}
+twoblock_rope_range = rope_range(fit_2block) # calculates the rope range using the tenth (1/10 = 0.1) of the standard deviation (SD) of the response variable (panas_score), which can be considered as a “negligible” effect size (Cohen, 1988)
+
+print("condition difference regardless of mood induction:")
+posterior_diffcondition <- describe_posterior(diff_condition, centrality = "median", ci = 0.95, ci_method = "hdi", rope_range = twoblock_rope_range, rope_ci = 0.95) %>% print()
+
+print("condition difference after negative mood induction:")
+posterior_diffc_negMI <- describe_posterior(diff_condition_negMI, rope_range = twoblock_rope_range) %>% print()
+
+print("condition difference after positive mood induction:")
+posterior_diffc_posMI <- describe_posterior(diff_condition_posMI, rope_range = twoblock_rope_range) %>% print()
+
+print("Is there a difference between the AAB (i.e. difference in RTs between conditions) after positive compared to after negative MI?")
+print("positive AAB in negative AAB:")
+posterior_diff_AAB <- describe_posterior(diff_condition_posMI, centrality = "none", rope_range = c(posterior_diffc_negMI$CI_low, posterior_diffc_negMI$CI_high), test = c("rope"))
+print(posterior_diff_AAB)
+
+print("negative AAB in positive AAB:")
+posterior_diff_AAB2 <- describe_posterior(diff_condition_negMI, centrality = "none", rope_range = c(posterior_diffc_posMI$CI_low, posterior_diffc_posMI$CI_high), test = c("rope"))
+print(posterior_diff_AAB2)
+
+```
+
+```{r hypothesis-tests}
+# Hypothesis 1: After negative mood induction, reaction times are shorter in the incongruent than in the congruent condition.
+hypothesis(fit_2block, "conditionincongruent < 0")
+# --> reject hypothesis, test other way:
+hypothesis(fit_2block, "conditionincongruent > 0")
+
+# Hypothesis 2: After positive mood induction, reaction times are longer in the incongruent than in the congruent condition.
+hypothesis(fit_2block, "conditionincongruent + `conditionincongruent:mood_inductionpositive` > 0")
+```
+Given that when analyzing only the first two blocks, I don't find an AAB in the positive mood induction condition, but only in the negative mood induction condition, the slight evidence from the main analysis in favour of the assumption that there might be a difference in AAB between the two mood induction conditions, has grown. But, of course, the sample size and effective sample size is also smaller than the sample sizes from the main analysis, so the results should be considered with caution.
