@@ -1,0 +1,449 @@
+---
+title: "Stimulus Valence"
+author: "Kristina Kobrock"
+date: "14 3 2022"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, message = FALSE, warning = FALSE)
+```
+```{r libraries, include=FALSE, message=FALSE, warning=FALSE}
+# package to extract R data from matlab files
+library(R.matlab)
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package for plotting (together with ggplot)
+library(ggpubr)
+
+# package to visualize 
+library(bayesplot)
+
+# package to extract CrIs
+library(bayestestR)
+
+# package to extract HDIs
+library(HDInterval)
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+# Green RYB: 5EB045, Barn red: 811F0E, Charcoal: 424B54, maximum yellow red: FFBA49, copper crayola: DE8F6E
+green <- "#5EB045"
+red <- "#811F0E"
+gray <- "#424B54"
+yellow <- "#FFBA49"
+copper <- "#DE8F6E"
+black <- "#000000"
+project_colors = c(red, green, gray, yellow, copper, black)
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
+```
+
+# The role of affect in the Automatic Approach Bias: An empirical investigation.
+
+## The effect of stimulus valence in the Affect-AAT
+Load the preprocessed data (see DataAnalysis.Rmd for details).
+```{r load-data}
+load("affect-aat.Rdata")
+```
+
+```{r backtransform-function, echo=FALSE}
+backtransform_RT <- function(list, df=df_aat_log1) {
+  round(exp(list * attr(df$log_RT_s, 'scaled:scale') + attr(df$log_RT_s, 'scaled:center')),2)
+}
+```
+
+### Model with stimulus valence
+```{r data-log-model, echo=FALSE}
+df_aat_log1 <- df_aat_log %>% 
+  mutate(mood_induction = factor(ifelse(mood_induction == "p", "positive", "negative")),
+         condition = factor(condition)) %>% 
+  rename(stimulus_valence = stimulus) %>% 
+  select(subject_id, trial, condition, mood_induction, log_RT_s, pictures, stimulus_valence)
+head(df_aat_log1)
+```
+The same priors are used as in the main analysis. No group-level effects are added.
+```{r priors, echo=FALSE}
+priors <- c(set_prior("student_t(3, 0, 3)", class = "Intercept"), # model-specific parameters weakly informed by the data
+                      set_prior("student_t(3, 0, 3)", class = "sigma"),
+                      set_prior("normal(0, 10)", class = "b")
+                      ) 
+```
+
+One model where stimulus_valence is added without interaction:
+```{r stimulus-model-no-interaction, echo=FALSE}
+fit_stimulusModel <- brm(log_RT_s ~ condition * mood_induction + stimulus_valence,
+                         data = df_aat_log1,
+                         family = gaussian(),
+                         prior = priors,     
+                         iter = 2000, 
+                         seed = 228,
+                         file = "stimulus_model"
+                         )
+```
+```{r}
+summary(fit_stimulusModel, priors=TRUE)
+```
+The model output suggests something that I did not expect: a main effect of stimulus_valence, but a negative main effect suggesting that actually positive instead of negative reaction times are shorter.
+
+I'm running a model with interaction to see whether this main effect is influenced by a specific condition in the experiment:
+```{r stimulus-model, echo=FALSE}
+
+fit_stimulusModelInt <- brm(log_RT_s ~ condition * mood_induction * stimulus_valence,
+                             data = df_aat_log1,
+                             family = gaussian(),
+                             prior = priors_log_model,     
+                             iter = 2000, 
+                             seed = 228,
+                             file = "stimulus_model_interaction"
+                             )
+```
+```{r log-model-summary, echo=FALSE}
+summary(fit_stimulusModelInt, priors = TRUE)
+```
+The main effect of stimulus valence is still visible, reaction times in response to positive stimuli seem to be shorter than reaction times in response to negative stimuli. 
+
+Plot data again to see whether this effect is also visible in the data:
+```{r plot-data-agg}
+# creating an aggregated data frame grouped by mood_induction and condition with the respective means
+df_aat_agg1 <- df_aat_log1 %>% 
+  group_by(stimulus_valence, condition) %>% 
+  summarise(mean = mean(log_RT_s)) 
+```
+The plot does not show much difference between groups. What happens if we zoom in?
+```{r plot-closer-stimulus-valence, echo=FALSE}
+# plot closer
+df_aat_log1 %>% 
+  # plotting both mood_induction and condition using facet_wrap
+  ggplot(aes(x = stimulus_valence, y = log_RT_s, color = stimulus_valence)) +
+  facet_wrap(~ condition) +
+  geom_point(alpha = 0.1, size = 1,
+             # adding a little bit of jitter to make the points visible
+             position = position_jitter(width = 0.3)) +
+  # adding means and a connecting line in order to make the differences between locations and conditions 
+  # visible
+  geom_line(data = df_aat_agg1,
+            aes(x = stimulus_valence, y = mean, group = condition), color=gray) +
+  geom_point(data = df_aat_agg1,
+             aes(x = stimulus_valence, y = mean, fill = stimulus_valence), size = 6) +
+  # axes labels and titles
+  labs(
+    title = "Effects of stimulus valence and condition on RT",
+    subtitle = "zoomed in",
+    y = "log(RT) (scaled)",
+    x = "stimulus valence by condition"
+  ) +
+  guides(fill = "none", color = "none") +
+  ylim(-0.2, 0.2)
+```
+
+```{r extract-posteriors, echo=FALSE}
+posteriors_stimulusModel <- fit_stimulusModelInt %>%
+  # just taking the population level effects here
+  spread_draws(b_Intercept, b_conditionincongruent,
+               #b_mood_inductionpositive, 
+               b_stimulus_valencepositive,
+               #`b_conditionincongruent:mood_inductionpositive`,
+               `b_conditionincongruent:stimulus_valencepositive`#,
+               #`b_mood_inductionpositive:stimulus_valencepositive`,
+               #`b_conditionincongruent:mood_inductionpositive:stimulus_valencepositive`
+               ) %>% 
+  mutate(
+    congruent_negative = b_Intercept,
+    incongruent_negative = b_Intercept + b_conditionincongruent,
+    congruent_positive = b_Intercept + b_stimulus_valencepositive,
+    incongruent_positive = b_Intercept + b_conditionincongruent + 
+      b_stimulus_valencepositive + `b_conditionincongruent:stimulus_valencepositive` 
+    ) %>% 
+  dplyr::select(congruent_negative, incongruent_negative,
+                congruent_positive, incongruent_positive) %>%
+  gather(key = "parameter", value = "posterior")
+
+```
+
+```{r differences, echo=FALSE}
+
+# difference between congruent and incongruent condition regardless of mood induction:
+
+# negative stimulus valences:
+post_negative <- posteriors_stimulusModel %>% 
+  filter(parameter == "congruent_negative" | parameter == "incongruent_negative") %>% 
+  select(posterior) 
+
+# positive stimulus valences:
+post_positive <- posteriors_stimulusModel %>% 
+  filter(parameter == "congruent_positive" | parameter == "incongruent_positive") %>% 
+  select(posterior) 
+
+diff_valence <- post_positive - post_negative # positive when RTs in response to negative stimuli are shorter (as would be expected)
+
+
+# congruent condition:
+post_congruent_neg <- posteriors_stimulusModel %>% 
+  filter(parameter == "congruent_negative") %>% 
+  select(posterior) 
+
+post_congruent_pos <- posteriors_stimulusModel %>% 
+  filter(parameter == "congruent_positive") %>% 
+  select(posterior)
+
+diff_valence_congruent <- post_congruent_pos - post_congruent_neg # positive when RTs in response to negative stimuli are shorter (as would be expected)
+
+
+# incongruent condition:
+post_incongruent_neg <- posteriors_stimulusModel %>% 
+  filter(parameter == "incongruent_negative") %>% 
+  select(posterior)
+
+post_incongruent_pos <- posteriors_stimulusModel %>% 
+  filter(parameter == "incongruent_positive") %>% 
+  select(posterior) 
+
+diff_valence_incongruent <- post_incongruent_pos - post_incongruent_neg 
+
+```
+```{r plot-stimulus-condition-difference, echo=FALSE}
+plot_1 <- diff_valence %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = yellow, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "stimulus valence posterior difference"
+  ) #+
+  #ylim(0, 13)
+
+plot_2 <- diff_valence_congruent %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = red, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "congruent trials"
+  ) #+
+  #ylim(0, 13)
+
+plot_3 <- diff_valence_incongruent %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = green, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "incongruent trials"
+  ) #+
+  #ylim(0, 15)
+
+ggarrange(plot_1, ggarrange(plot_2, plot_3, ncol=2), nrow=2)
+```
+
+The difference in reaction times does not seem to depend on condition. 
+```{r extract-posteriors2, echo=FALSE}
+posteriors_stimulusModelMI <- fit_stimulusModelInt %>%
+  # just taking the population level effects here
+  spread_draws(b_Intercept, 
+               #b_conditionincongruent,
+               b_mood_inductionpositive, 
+               b_stimulus_valencepositive,
+               `b_conditionincongruent:mood_inductionpositive`,
+               #`b_conditionincongruent:stimulus_valencepositive`#,
+               `b_mood_inductionpositive:stimulus_valencepositive`#,
+               #`b_conditionincongruent:mood_inductionpositive:stimulus_valencepositive`
+               ) %>% 
+  mutate(
+    negMI_negative = b_Intercept,
+    posMI_negative = b_Intercept + b_mood_inductionpositive,
+    negMI_positive = b_Intercept + b_stimulus_valencepositive,
+    posMI_positive = b_Intercept + b_mood_inductionpositive + 
+      b_stimulus_valencepositive + `b_mood_inductionpositive:stimulus_valencepositive` 
+    ) %>% 
+  dplyr::select(negMI_negative, posMI_negative,
+                negMI_positive, posMI_positive) %>%
+  gather(key = "parameter", value = "posterior")
+
+```
+
+```{r differences2, echo=FALSE}
+
+# difference between valence and mood induction regardless of condition:
+
+# negative stimulus valences:
+post_negative <- posteriors_stimulusModelMI %>% 
+  filter(parameter == "posMI_negative" | parameter == "negMI_negative") %>% 
+  select(posterior) 
+
+# positive stimulus valences:
+post_positive <- posteriors_stimulusModelMI %>% 
+  filter(parameter == "posMI_positive" | parameter == "negMI_positive") %>% 
+  select(posterior) 
+
+diff_valence <- post_positive - post_negative # positive when RTs in response to negative stimuli are shorter (as would be expected)
+
+
+# after negative mood induction:
+post_negMI_neg <- posteriors_stimulusModelMI %>% 
+  filter(parameter == "negMI_negative") %>% 
+  select(posterior) 
+
+post_negMI_pos <- posteriors_stimulusModelMI %>% 
+  filter(parameter == "negMI_positive") %>% 
+  select(posterior)
+
+diff_valence_negMI <- post_negMI_pos - post_negMI_neg # positive when RTs in response to negative stimuli are shorter (as would be expected)
+
+
+# after positive mood induction:
+post_posMI_neg <- posteriors_stimulusModelMI %>% 
+  filter(parameter == "posMI_negative") %>% 
+  select(posterior)
+
+post_posMI_pos <- posteriors_stimulusModelMI %>% 
+  filter(parameter == "posMI_positive") %>% 
+  select(posterior) 
+
+diff_valence_posMI <- post_posMI_pos - post_posMI_neg 
+
+```
+```{r plot-stimulus-MI-difference, echo=FALSE}
+plot_1 <- diff_valence %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = yellow, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "stimulus valence posterior difference"
+  ) #+
+  #ylim(0, 13)
+
+plot_2 <- diff_valence_negMI %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = red, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "after negative mood induction"
+  ) +
+  #ylim(0, 13)
+  xlim(-0.25, 0.05)
+
+plot_3 <- diff_valence_posMI %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = green, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "after positive mood induction"
+  ) +
+  #ylim(0, 15)
+  xlim(-0.25, 0.05)
+  
+ggarrange(plot_1, ggarrange(plot_2, plot_3, ncol=2), nrow=2)
+```
+```{r difference-in-ms, echo=FALSE}
+# transform all posterior estimates to the ms scale:
+post_positive_ms <- backtransform_RT(post_positive)
+post_negative_ms <- backtransform_RT(post_negative)
+diff_valence_ms <- post_positive_ms - post_negative_ms
+
+post_positive_negMI_ms <- backtransform_RT(post_negMI_pos)
+post_negative_negMI_ms <- backtransform_RT(post_negMI_neg)
+diff_valence_negMI_ms <- post_positive_negMI_ms - post_negative_negMI_ms
+
+post_positive_posMI_ms <- backtransform_RT(post_posMI_pos)
+post_negative_posMI_ms <- backtransform_RT(post_posMI_neg)
+diff_valence_posMI_ms <- post_positive_posMI_ms - post_negative_posMI_ms
+
+```
+```{r describe-differences-ms, echo=FALSE}
+
+df_diffvalence <- data.frame(
+  posteriors = "valence difference",
+  median = median(diff_valence_ms$posterior),
+  CrI_lower = HDInterval::hdi(diff_valence_ms$posterior)[1],
+  CrI_upper = HDInterval::hdi(diff_valence_ms$posterior)[2]
+)
+df_diffnegMI <- data.frame(
+  posteriors = "difference after negative mood induction",
+  median = median(diff_valence_negMI_ms$posterior),
+  CrI_lower = HDInterval::hdi(diff_valence_negMI_ms$posterior)[1],
+  CrI_upper = HDInterval::hdi(diff_valence_negMI_ms$posterior)[2]
+)
+df_diffposMI <- data.frame(
+  posteriors = "difference after positive mood induction",
+  median = median(diff_valence_posMI_ms$posterior),
+  CrI_lower = HDInterval::hdi(diff_valence_posMI_ms$posterior)[1],
+  CrI_upper = HDInterval::hdi(diff_valence_posMI_ms$posterior)[2]
+)
+
+differences_in_ms <- tibble(rbind(
+  df_diffvalence,
+  df_diffnegMI,
+  df_diffposMI
+))
+
+differences_in_ms
+```
+
+The difference seems to depend on the mood induction condition. Especially in the positive mood induction condition, the reaction times are shorter for positive than for negative stimuli.
+```{r bayestests, echo=FALSE}
+stimulusModel_rope_range = rope_range(fit_stimulusModel) # calculates the rope range using the tenth (1/10 = 0.1) of the standard deviation (SD) of the response variable (panas_score), which can be considered as a “negligible” effect size (Cohen, 1988)
+
+print("valence difference regardless of condition:")
+posterior_diffcondition <- describe_posterior(diff_valence, centrality = "median", ci = 0.95, ci_method = "hdi", rope_range = stimulusModel_rope_range, rope_ci = 0.95) %>% print()
+
+print("valence difference after negative mood induction:")
+posterior_diffv_negMI <- describe_posterior(diff_valence_negMI, rope_range = stimulusModel_rope_range) %>% print()
+
+print("valence difference after positive mood induction:")
+posterior_diffv_posMI <- describe_posterior(diff_valence_posMI, rope_range = stimulusModel_rope_range) %>% print()
+
+```
+
+```{r hypothesistests}
+# difference between reaction times for the different valences?
+
+# SHORTER! reaction times for positive than for negative stimuli in the congruent condition after Negind
+hypothesis(fit_stimulusModelInt, 'Intercept + stimulus_valencepositive < Intercept')
+
+# SHORTER reaction times for positive than for negative in the incongruent condition after Negind
+hypothesis(fit_stimulusModelInt, 'Intercept + stimulus_valencepositive + conditionincongruent + conditionincongruent:stimulus_valencepositive < Intercept + conditionincongruent')
+
+# after positive Mood ind:
+# congruent: LARGEST ESTIMATE!
+hypothesis(fit_stimulusModelInt, 'Intercept + stimulus_valencepositive + mood_inductionpositive + mood_inductionpositive:stimulus_valencepositive < Intercept + mood_inductionpositive')
+
+# incongruent:
+hypothesis(fit_stimulusModelInt, 'Intercept + stimulus_valencepositive + mood_inductionpositive + mood_inductionpositive:stimulus_valencepositive + conditionincongruent + conditionincongruent:mood_inductionpositive + conditionincongruent:stimulus_valencepositive + conditionincongruent:mood_inductionpositive:stimulus_valencepositive < Intercept + mood_inductionpositive + conditionincongruent + conditionincongruent:mood_inductionpositive')
+```
+
+Usually, I'd expect reaction times in response to negative stimuli to be smaller than reaction times in response to positive stimuli. Here, the exact opposite seems to be the case.
