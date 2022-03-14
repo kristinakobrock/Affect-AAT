@@ -1,0 +1,99 @@
+---
+title: "Mood induction item analysis"
+author: "Kristina Kobrock"
+date: "14 3 2022"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, message = FALSE, warning = FALSE)
+```
+```{r libraries, include=FALSE, message=FALSE, warning=FALSE}
+# package to extract R data from matlab files
+library(R.matlab)
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package for plotting (together with ggplot)
+library(ggpubr)
+
+# package to visualize 
+library(bayesplot)
+
+# package to extract CrIs
+library(bayestestR)
+
+# package to extract HDIs
+library(HDInterval)
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+# Green RYB: 5EB045, Barn red: 811F0E, Charcoal: 424B54, maximum yellow red: FFBA49, copper crayola: DE8F6E
+green <- "#5EB045"
+red <- "#811F0E"
+gray <- "#424B54"
+yellow <- "#FFBA49"
+copper <- "#DE8F6E"
+black <- "#000000"
+project_colors = c(red, green, gray, yellow, copper, black)
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
+```
+
+# The role of affect in the Automatic Approach Bias: An empirical investigation.
+
+## Mood induction
+Load the preprocessed data (see DataAnalysis.Rmd for details).
+```{r load-data}
+load("panas.Rdata")
+```
+
+### Investigating the role of specific PANAS questionnaire items on the outcome
+Split data into two different datasets: one for PA and one for NA
+```{r split-data}
+NA_data <- df_affect_mutate %>% 
+  filter(item_affect == "NA") 
+
+PA_data <- df_affect_mutate %>% 
+  filter(item_affect == "PA")
+```
+Run two different models to predict PA and NA scales, respectively:
+```{r na-model, echo=FALSE}
+NA_model <- brm(panas_score ~ panas_item,
+                  iter = 2000,
+                  data = NA_data,
+                  seed = 603,
+                  file = "NA_model_onlyitem")
+```
+```{r pa-model, echo=FALSE}
+PA_model <- brm(panas_score ~ panas_item,
+                  iter = 2000,
+                  data = PA_data,
+                  seed = 603,
+                  file = "PA_model_onlyitem")
+```
+```{r sum-na-model, echo=FALSE}
+summary(NA_model)
+```
+```{r sum-pa-model, echo=FALSE}
+summary(PA_model)
+```
+
