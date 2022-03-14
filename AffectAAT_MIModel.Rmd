@@ -196,21 +196,27 @@ pp_check(fit_MImodel, ndraws = 50, type = "dens_overlay")
 ```
 
 The model fit is okay, but it's also very obvious that the normal link function failed to capture the skewed distribution of the data. But due to previous studies that successfully used a linear model with normal link function, the fit is considered good enough.
+
+```{r extract-posteriors, echo=FALSE}
+posteriors_MImodel <- fit_MImodel %>%
+  # just taking the population level effects here
+  spread_draws(b_Intercept, b_conditionincongruent,
+               b_mood_inductionpositive, `b_conditionincongruent:mood_inductionpositive`) %>% 
+  mutate(
+    congruent_negative = b_Intercept,
+    incongruent_negative = b_Intercept + b_conditionincongruent,
+    congruent_positive = b_Intercept + b_mood_inductionpositive,
+    incongruent_positive = b_Intercept + b_conditionincongruent + 
+      b_mood_inductionpositive + `b_conditionincongruent:mood_inductionpositive` 
+    ) %>% 
+  dplyr::select(congruent_negative, incongruent_negative,
+                congruent_positive, incongruent_positive) %>%
+  gather(key = "parameter", value = "posterior")
+
+```
 ```{r plot-hdi-posteriors, echo=FALSE}
 # Extract the posteriors
-posteriors <- fit_MImodel %>%
-  spread_draws(b_Intercept, 
-               b_conditionincongruent,
-               b_mood_inductionpositive,
-               `b_conditionincongruent:mood_inductionpositive`) %>%
-  # calculate posteriors for each individual level
-  mutate(congruent_negative = b_Intercept,
-         incongruent_negative = b_Intercept + b_conditionincongruent,
-         congruent_positive = b_Intercept + b_mood_inductionpositive,
-         incongruent_positive = b_Intercept + b_conditionincongruent + b_mood_inductionpositive 
-                                + `b_conditionincongruent:mood_inductionpositive`) %>% 
-  select(congruent_negative, incongruent_negative, congruent_positive, incongruent_positive) %>%
-  gather(key = "parameter", value = "posterior") %>% 
+posteriors <- posteriors_MImodel %>% 
   group_by(parameter) %>% 
   summarise(mean_posterior = mean(posterior),
             `95lowerCrI` = HDInterval::hdi(posterior, credMass = 0.95)[1],
@@ -240,23 +246,6 @@ ggplot(data = posteriors,
 ```
 
 Posterior estimates match the data very well. The posterior means are nearly the same as the means from the data distribution (compare to figure above).
-```{r extract-posteriors, echo=FALSE}
-posteriors_MImodel <- fit_MImodel %>%
-  # just taking the population level effects here
-  spread_draws(b_Intercept, b_conditionincongruent,
-               b_mood_inductionpositive, `b_conditionincongruent:mood_inductionpositive`) %>% 
-  mutate(
-    congruent_negative = b_Intercept,
-    incongruent_negative = b_Intercept + b_conditionincongruent,
-    congruent_positive = b_Intercept + b_mood_inductionpositive,
-    incongruent_positive = b_Intercept + b_conditionincongruent + 
-      b_mood_inductionpositive + `b_conditionincongruent:mood_inductionpositive` 
-    ) %>% 
-  dplyr::select(congruent_negative, incongruent_negative,
-                congruent_positive, incongruent_positive) %>%
-  gather(key = "parameter", value = "posterior")
-
-```
 
 ```{r differences, echo=FALSE}
 
