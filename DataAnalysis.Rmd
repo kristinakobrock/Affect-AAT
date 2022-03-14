@@ -361,8 +361,9 @@ df_days_between_3 <- df_days_between_2 %>%
 ### Further preprocessing PANAS data for mood induction analysis
 The individual responses to the PANAS questionnaire items (20 items, responses were numbers from 1 to 5), are summed up for each participant and condition. This leads to one overall PANAS score for each participant in each experimental condition (negative or positive mood induction, before or after) - well, two actually because the PA and NA scales have to be calculated individually.
 ```{r calc_panas_scores}
+print(df_affect_excs)
 df_affect_scores <- df_affect_excs %>% 
-  group_by(subject_id, session_nr, mood_induction, subjectgender, panas_nr, item_affect) %>% 
+  group_by(subject_id, session_nr, mood_induction, subjectgender, panas_nr, item_affect, panas_item) %>% 
   summarise(panas_score = sum(item_score)) %>% 
   ungroup()
 ```
