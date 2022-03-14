@@ -453,7 +453,7 @@ df_affect_excs &lt;- df_affect %&gt;%
 <h3>Further preprocessing PANAS data for mood induction analysis</h3>
 <p>The individual responses to the PANAS questionnaire items (20 items, responses were numbers from 1 to 5), are summed up for each participant and condition. This leads to one overall PANAS score for each participant in each experimental condition (negative or positive mood induction, before or after) - well, two actually because the PA and NA scales have to be calculated individually.</p>
 <pre class="r"><code>df_affect_scores &lt;- df_affect_excs %&gt;% 
-  group_by(subject_id, session_nr, mood_induction, panas_nr, item_affect) %&gt;% 
+  group_by(subject_id, session_nr, mood_induction, subjectgender, panas_nr, item_affect) %&gt;% 
   summarise(panas_score = sum(item_score)) %&gt;% 
   ungroup()</code></pre>
 <p>I’m solving this problem (that I have two PANAS scores) by recoding NA scores such that they correspond to negative values on the same axis as the PA scores: The data is recoded such that NA scale panas scores receive a negative leading sign.</p>
