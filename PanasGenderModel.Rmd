@@ -1,0 +1,115 @@
+---
+title: "PANAS Gender Model"
+author: "Kristina Kobrock"
+date: "14 3 2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, message = FALSE, warning = FALSE)
+```
+```{r libraries, include=FALSE, message=FALSE, warning=FALSE}
+# package to extract R data from matlab files
+library(R.matlab)
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package for plotting (together with ggplot)
+library(ggpubr)
+
+# package to visualize 
+library(bayesplot)
+
+# package to extract CrIs
+library(bayestestR)
+
+# package to extract HDIs
+library(HDInterval)
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+# Green RYB: 5EB045, Barn red: 811F0E, Charcoal: 424B54, maximum yellow red: FFBA49, copper crayola: DE8F6E
+green <- "#5EB045"
+red <- "#811F0E"
+gray <- "#424B54"
+yellow <- "#FFBA49"
+copper <- "#DE8F6E"
+black <- "#000000"
+project_colors = c(red, green, gray, yellow, copper, black)
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
+```
+
+# The role of affect in the Automatic Approach Bias: An empirical investigation.
+
+## Mood induction
+Load the preprocessed data (see DataAnalysis.Rmd for details).
+```{r}
+load("panas.Rdata")
+```
+
+### Is there a main effect of participants' gender on mood induction?
+
+#### Visual inspection
+```{r aggregate, echo=FALSE}
+df_affect_agg <- df_affect_mutate %>% 
+  group_by(mood_induction, item_affect, subjectgender, panas_nr) %>% 
+  summarise(mean = round(mean(panas_score), 2),
+            sd = round(sd(panas_score), 2)) %>% 
+  filter(panas_nr == 2) %>% 
+  print()
+```
+
+Visual inspection of the means does not reveal any differences between gender after the mood induction.
+
+### Statistical model
+The variables subjectgender and mood_induction are contrast-coded for quick interpretation of interactions.
+```{r contrast-code, echo=FALSE}
+df_affect_coded <- df_affect_mutate %>% 
+  mutate(subjectgender = ifelse(subjectgender == "female", 0.5, -0.5),
+         mood_induction = ifelse(mood_induction == "positive", -0.5, 0.5))
+head(df_affect_coded)
+```
+```{r panas_model, echo=FALSE}
+# predicting panas_score by the valence of the mood_induction (positive/negative), panas_nr (before or after the mood induction) and subjectgender
+
+priors = priors <- c(
+  set_prior("normal(-22, 5)", class = "Intercept"), # prior informed by the data (NA means are between -20.83 and -23.62), but with a wide standard deviation
+  set_prior("normal(44, 5)", class = "b", coef = "item_affectPA"), # prior informed by the data (PA means are between 20.47 and 24.52)
+  set_prior("normal(0, 10)", class = "b") # agnostic priors for all other fixed effects
+)
+# item_affect is not of further interest here, but needs to be included in the model so that it can estimate the correct PA/NA scales
+panas_model <- brm(panas_score ~ subjectgender * item_affect * panas_nr * mood_induction, # four-way interaction
+                   prior = priors, # same priors as in main model
+                   iter = 2000,
+                   seed = 305,
+                   data = df_affect_coded,
+                   file = "panas_gender_model") 
+```
+```{r}
+summary(panas_model, priors=TRUE)
+```
+```{r pp-check, echo=FALSE}
+pp_check(panas_model, ndraws = 50, type = "dens_overlay")
+```
+
+There is no main effect of subjectgender on the mood induction. Also none of the interactions including subjectgender substantially contributed to the effect. If anything, then there is a slight difference in baseline mood before mood induction between the two genders (subjectgender:item_affectPA, subjectgender:item_affectPA:mood_induction) - but that's not of importance here, so it's not further investigated.
