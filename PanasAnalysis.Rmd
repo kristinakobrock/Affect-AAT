@@ -243,9 +243,10 @@ PAdiffNegind <- PAafterNegind - PAbeforeNegind
 plot_1 <- NAdiffNegind %>% 
   ggplot(aes(x = posterior)) +
   geom_density(size=1, color = gray, fill = red, alpha = 0.5) +
-  geom_vline(aes(xintercept = median(posterior)), size=1, color=black) +
-  geom_vline(aes(xintercept = hdi(posterior)[1])) +
-  geom_vline(aes(xintercept = hdi(posterior)[2])) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
   labs(
     x = ""
   )
@@ -253,9 +254,10 @@ plot_1 <- NAdiffNegind %>%
 plot_2 <- PAdiffNegind %>% 
   ggplot(aes(x = posterior)) +
   geom_density(size=1, color = gray, fill = green, alpha = 0.5) +
-  geom_vline(aes(xintercept = median(posterior)), size=1, color=black) +
-  geom_vline(aes(xintercept = hdi(posterior)[1])) +
-  geom_vline(aes(xintercept = hdi(posterior)[2])) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
   labs(
     x = "negative mood induction"
   ) +
@@ -289,9 +291,10 @@ PAdiffPosind <- PAafterPosind - PAbeforePosind
 plot_3 <- NAdiffPosind %>% 
   ggplot(aes(x = posterior)) +
   geom_density(size=1, color = gray, fill = red, alpha = 0.5) +
-  geom_vline(aes(xintercept = median(posterior)), size=1, color=black) +
-  geom_vline(aes(xintercept = hdi(posterior)[1])) +
-  geom_vline(aes(xintercept = hdi(posterior)[2])) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
   labs(
     x = ""
   ) +
@@ -300,9 +303,10 @@ plot_3 <- NAdiffPosind %>%
 plot_4 <- PAdiffPosind %>% 
   ggplot(aes(x = posterior)) +
   geom_density(size=1, color = gray, fill = green, alpha = 0.5) +
-  geom_vline(aes(xintercept = median(posterior)), size=1, color=black) +
-  geom_vline(aes(xintercept = hdi(posterior)[1])) +
-  geom_vline(aes(xintercept = hdi(posterior)[2])) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
   labs(
     x = "positive mood induction"
   )
