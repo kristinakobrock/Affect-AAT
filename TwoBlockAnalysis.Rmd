@@ -133,12 +133,12 @@ preprocess_aat <- function(data) {
                    pushtimes = pushtimes[1:176],
                    pulltimes = pulltimes[1:176],
                    reaction_times = alltimes[1:176] * 1000) %>% # change scaling to ms
-    mutate(stimulus = ifelse(pictures <= 44, "positive", "negative"),
+    mutate(stimulus_valence = ifelse(pictures <= 44, "positive", "negative"),
            response = ifelse(response == 0, "pull", "push"),
-           correct = ifelse(((condition == "congruent" & stimulus == "positive" & response == "pull") |
-                               (condition == "congruent" & stimulus == "negative" & response == "push") |
-                               (condition == "incongruent" & stimulus == "positive" & response == "push") |
-                               (condition == "incongruent" & stimulus == "negative" & response == "pull")), 1, 0))
+           correct = ifelse(((condition == "congruent" & stimulus_valence == "positive" & response == "pull") |
+                               (condition == "congruent" & stimulus_valence == "negative" & response == "push") |
+                               (condition == "incongruent" & stimulus_valence == "positive" & response == "push") |
+                               (condition == "incongruent" & stimulus_valence == "negative" & response == "pull")), 1, 0))
 }
 ```
 ```{r preprocessing, include=FALSE}
@@ -256,11 +256,14 @@ df_aat_log <- df_aat_exc %>%
   mutate(log_RT = log(reaction_times))
 df_aat_log$log_RT_s <- scale(df_aat_log$log_RT, scale = TRUE)
 ```
+```{r save-2-block-data, echo=FALSE}
+save(df_aat_log, file = "affect-aat-2-block.Rdata")
+```
 ```{r data-log-model, echo=FALSE}
 df_aat_log1 <- df_aat_log %>% 
   mutate(mood_induction = factor(ifelse(mood_induction == "p", "positive", "negative")),
          condition = factor(condition)) %>% 
-  select(subject_id, trial, condition, mood_induction, log_RT_s, pictures, stimulus, response)
+  select(subject_id, trial, condition, mood_induction, log_RT_s, pictures, stimulus_valence, response)
 head(df_aat_log1)
 ```
 Log-transformed normal model with same specifications as before (same priors and group-level effects for subject_id) for 4000 iterations:
@@ -326,14 +329,14 @@ ggplot(data = posteriors,
        aes(x = condition, y = mean_posterior,
            color = mood_induction, fill = mood_induction)) + 
   geom_errorbar(aes(ymin = `95lowerCrI`, ymax = `95higherCrI`),
-                width = 0.2, color = "grey") +
+                width = 0.2, color = "grey", size=1) +
   geom_line(aes(group = 1)) +
   geom_point(size = 5) +
   facet_grid(~mood_induction) +
   guides(color = "none", fill = "none") +
   labs(x = "condition by mood induction",
-       y = "posterior log(RT) (scaled)",
-       title = "Posterior estimates with credible intervals")
+       y = "log(RT) (scaled)",
+       title = "Two-block model: Posterior estimates with CrIs")
 ```
 
 Compared to the main analysis, here the rather flat slope indicating the AAB after positive mood induction attracts attention. In light of the two hypotheses from the preregistration, this result would be at least as suprising as the result from the main analysis: Not in the negative mood induction condition as predicted but in the positive mood induction condition, is the AAB leveled out! 
@@ -417,7 +420,9 @@ plot_3 <- diff_condition_posMI %>%
   ylim(0, 13) +
   xlim(-0.1, 0.25)
 
-ggarrange(plot_1, ggarrange(plot_2, plot_3, ncol=2), nrow=2)
+ggarrange(plot_1, ggarrange(plot_2, plot_3, ncol=2), nrow=2) +
+  ggtitle("Two-block model: Posterior difference distributions\n") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", size=20))
 ```
 
 Indeed, the difference between congruent and incongruent condition, i.e. the AAB, is not significant after positive mood induction but only after negative mood induction.
@@ -528,6 +533,42 @@ print("negative AAB in positive AAB:")
 posterior_diff_AAB2 <- describe_posterior(diff_condition_negMI, centrality = "none", rope_range = c(posterior_diffc_posMI$CI_low, posterior_diffc_posMI$CI_high), test = c("rope"))
 print(posterior_diff_AAB2)
 
+```
+
+#### Difference distributions for the difference in reaction times between positive and negative mood induction:
+```{r mi-differences, echo=FALSE}
+
+# difference between positive and negative mood induction regardless of condition:
+
+# positive mood induction:
+post_positive <- posteriors_2block %>% 
+  filter(parameter == "incongruent_positive" | parameter == "congruent_positive") %>% 
+  select(posterior) 
+
+# negative mood induction:
+post_negative <- posteriors_2block %>% 
+  filter(parameter == "incongruent_negative" | parameter == "congruent_negative") %>% 
+  select(posterior) 
+
+diff_MI <- post_negative - post_positive # positive when RTs after negative MI are longer than after positive MI
+
+```
+```{r plot-mi-difference, echo=FALSE}
+diff_MI %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = gray, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "mood induction posterior difference"
+  ) 
+
+```
+```{r bayestests-mi, echo=FALSE}
+print("mood induction difference regardless of condition:")
+posterior_diffMI <- describe_posterior(diff_MI, centrality = "median", ci = 0.95, ci_method = "hdi", rope_range = twoblock_rope_range, rope_ci = 0.95) %>% print()
 ```
 
 ```{r hypothesis-tests}
