@@ -63,37 +63,443 @@ scale_fill_discrete <- function(...) {
 ## Mood induction
 Load the preprocessed data (see DataAnalysis.Rmd for details).
 ```{r load-data}
-load("panas.Rdata")
+load("panas_item.Rdata")
 ```
 
 ### Investigating the role of specific PANAS questionnaire items on the outcome
+```{r prepare-data}
+df_affect_scores <- df_affect_excs %>% 
+  group_by(subject_id, session_nr, mood_induction, subjectgender, panas_nr, item_affect) %>% 
+  mutate(panas_score = sum(item_score)) %>% 
+  ungroup() %>% 
+  select(subject_id, session_nr, mood_induction, panas_nr, item_affect, panas_item, item_nr, item_score, panas_score)
+
+df_affect_mutate <- df_affect_scores %>% 
+  mutate(panas_score = ifelse(item_affect == "NA", -panas_score, panas_score),
+         panas_item = factor(panas_item),
+         mood_induction = factor(mood_induction),
+         panas_nr = factor(panas_nr))
+  
+```
 Split data into two different datasets: one for PA and one for NA
 ```{r split-data}
 NA_data <- df_affect_mutate %>% 
-  filter(item_affect == "NA") 
+  filter(item_affect == "NA"
+         & mood_induction == "positive")
 
 PA_data <- df_affect_mutate %>% 
-  filter(item_affect == "PA")
+  filter(item_affect == "PA"
+         & mood_induction == "negative")
+
 ```
+
 Run two different models to predict PA and NA scales, respectively:
 ```{r na-model, echo=FALSE}
-NA_model <- brm(panas_score ~ panas_item,
+NA_model <- brm(panas_score ~ panas_item * panas_nr + item_score,
                   iter = 2000,
                   data = NA_data,
-                  seed = 603,
-                  file = "NA_model_onlyitem")
-```
-```{r pa-model, echo=FALSE}
-PA_model <- brm(panas_score ~ panas_item,
-                  iter = 2000,
-                  data = PA_data,
-                  seed = 603,
-                  file = "PA_model_onlyitem")
+                  seed = 2203,
+                  file = "NA_model")
 ```
 ```{r sum-na-model, echo=FALSE}
 summary(NA_model)
 ```
-```{r sum-pa-model, echo=FALSE}
-summary(PA_model)
+```{r extract-posteriors-na, echo=FALSE}
+posteriors_NA <- NA_model %>% 
+  spread_draws(b_Intercept, b_panas_itemashamed, b_panas_itemdistressed, b_panas_itemguilty, 
+               b_panas_itemhostile, b_panas_itemirritable, b_panas_itemjittery, b_panas_itemnervous, 
+               b_panas_itemscared, b_panas_itemupset, b_panas_nr2, b_item_score,
+               `b_panas_itemashamed:panas_nr2`, `b_panas_itemdistressed:panas_nr2`,
+               `b_panas_itemguilty:panas_nr2`, `b_panas_itemhostile:panas_nr2`,
+               `b_panas_itemirritable:panas_nr2`, `b_panas_itemjittery:panas_nr2`,
+               `b_panas_itemnervous:panas_nr2`, `b_panas_itemscared:panas_nr2`,
+               `b_panas_itemupset:panas_nr2`) %>% 
+  mutate(afraid_before = b_Intercept, afraid_after = b_Intercept + b_panas_nr2,
+         ashamed_before = b_Intercept + b_panas_itemashamed, ashamed_after = b_Intercept + b_panas_itemashamed + b_panas_nr2 + `b_panas_itemashamed:panas_nr2`,
+         distressed_before = b_Intercept + b_panas_itemdistressed, distressed_after = b_Intercept + b_panas_itemdistressed + b_panas_nr2 + `b_panas_itemdistressed:panas_nr2`,
+         guilty_before = b_Intercept + b_panas_itemguilty, guilty_after = b_Intercept + b_panas_itemguilty + b_panas_nr2 + `b_panas_itemguilty:panas_nr2`,
+         hostile_before = b_Intercept + b_panas_itemhostile, hostile_after = b_Intercept + b_panas_itemhostile + b_panas_nr2 + `b_panas_itemhostile:panas_nr2`,
+         irritable_before = b_Intercept + b_panas_itemirritable, irritable_after = b_Intercept + b_panas_itemirritable + b_panas_nr2 + `b_panas_itemirritable:panas_nr2`,
+         jittery_before = b_Intercept + b_panas_itemjittery, jittery_after = b_Intercept + b_panas_itemjittery + b_panas_nr2 + `b_panas_itemjittery:panas_nr2`,
+         nervous_before = b_Intercept + b_panas_itemnervous, nervous_after = b_Intercept + b_panas_itemnervous + b_panas_nr2 + `b_panas_itemnervous:panas_nr2`,
+         scared_before = b_Intercept + b_panas_itemscared, scared_after = b_Intercept + b_panas_itemscared + b_panas_nr2 + `b_panas_itemscared:panas_nr2`,
+         upset_before = b_Intercept + b_panas_itemupset, upset_after = b_Intercept + b_panas_itemupset + b_panas_nr2 + `b_panas_itemupset:panas_nr2`) %>% 
+  select(afraid_before, afraid_after, ashamed_before, ashamed_after,
+         distressed_before, distressed_after, guilty_before, guilty_after,
+         hostile_before, hostile_after, irritable_before, irritable_after,
+         jittery_before, jittery_after, nervous_before, nervous_after,
+         scared_before, scared_after, upset_before, upset_after) %>% 
+  gather(key = "parameter", value = "posterior")
+```
+```{r differences-na, echo=FALSE}
+# difference between before and after mood induction for item afraid:
+
+# before:
+pos_afraid_before <- posteriors_NA %>% 
+  filter(parameter == "afraid_before") %>% 
+  select(posterior) 
+
+# after:
+pos_afraid_after <- posteriors_NA %>% 
+  filter(parameter == "afraid_after") %>% 
+  select(posterior) 
+
+diff_afraid <- pos_afraid_after - pos_afraid_before # positive 
+
+# ashamed
+# before:
+pos_ashamed_before <- posteriors_NA %>% 
+  filter(parameter == "ashamed_before") %>% 
+  select(posterior) 
+
+# after:
+pos_ashamed_after <- posteriors_NA %>% 
+  filter(parameter == "ashamed_after") %>% 
+  select(posterior) 
+
+diff_ashamed <- pos_ashamed_after - pos_ashamed_before # positive 
+
+
+# distressed
+# before:
+pos_distressed_before <- posteriors_NA %>% 
+  filter(parameter == "distressed_before") %>% 
+  select(posterior) 
+
+# after:
+pos_distressed_after <- posteriors_NA %>% 
+  filter(parameter == "distressed_after") %>% 
+  select(posterior) 
+
+diff_distressed <- pos_distressed_after - pos_distressed_before # positive 
+
+
+# guilty
+# before:
+pos_guilty_before <- posteriors_NA %>% 
+  filter(parameter == "guilty_before") %>% 
+  select(posterior) 
+
+# after:
+pos_guilty_after <- posteriors_NA %>% 
+  filter(parameter == "guilty_after") %>% 
+  select(posterior) 
+
+diff_guilty <- pos_guilty_after - pos_guilty_before # positive 
+
+
+# hostile
+# before:
+pos_hostile_before <- posteriors_NA %>% 
+  filter(parameter == "hostile_before") %>% 
+  select(posterior) 
+
+# after:
+pos_hostile_after <- posteriors_NA %>% 
+  filter(parameter == "hostile_after") %>% 
+  select(posterior) 
+
+diff_hostile <- pos_hostile_after - pos_hostile_before # positive 
+
+
+# irritable
+# before:
+pos_irritable_before <- posteriors_NA %>% 
+  filter(parameter == "irritable_before") %>% 
+  select(posterior) 
+
+# after:
+pos_irritable_after <- posteriors_NA %>% 
+  filter(parameter == "irritable_after") %>% 
+  select(posterior) 
+
+diff_irritable <- pos_irritable_after - pos_irritable_before # positive 
+
+
+# jittery
+# before:
+pos_jittery_before <- posteriors_NA %>% 
+  filter(parameter == "jittery_before") %>% 
+  select(posterior) 
+
+# after:
+pos_jittery_after <- posteriors_NA %>% 
+  filter(parameter == "jittery_after") %>% 
+  select(posterior) 
+
+diff_jittery <- pos_jittery_after - pos_jittery_before # positive 
+
+
+
+# nervous
+# before:
+pos_nervous_before <- posteriors_NA %>% 
+  filter(parameter == "nervous_before") %>% 
+  select(posterior) 
+
+# after:
+pos_nervous_after <- posteriors_NA %>% 
+  filter(parameter == "nervous_after") %>% 
+  select(posterior) 
+
+diff_nervous <- pos_nervous_after - pos_nervous_before # positive 
+
+
+# scared
+# before:
+pos_scared_before <- posteriors_NA %>% 
+  filter(parameter == "scared_before") %>% 
+  select(posterior) 
+
+# after:
+pos_scared_after <- posteriors_NA %>% 
+  filter(parameter == "scared_after") %>% 
+  select(posterior) 
+
+diff_scared <- pos_scared_after - pos_scared_before # positive 
+
+
+# upset
+# before:
+pos_upset_before <- posteriors_NA %>% 
+  filter(parameter == "upset_before") %>% 
+  select(posterior) 
+
+# after:
+pos_upset_after <- posteriors_NA %>% 
+  filter(parameter == "upset_after") %>% 
+  select(posterior) 
+
+diff_upset <- pos_upset_after - pos_upset_before # positive 
+
+```
+```{r na-posterior-descriptions, echo=FALSE}
+rope_range <- rope_range(NA_model)
+
+print("afraid")
+describe_posterior(diff_afraid, rope_range = rope_range)
+print("ashamed")
+describe_posterior(diff_ashamed, rope_range = rope_range)
+print("distressed")
+describe_posterior(diff_distressed, rope_range = rope_range)
+print("guilty")
+describe_posterior(diff_guilty, rope_range = rope_range)
+print("hostile")
+describe_posterior(diff_hostile, rope_range = rope_range)
+print("irritable")
+describe_posterior(diff_irritable, rope_range = rope_range)
+print("jittery")
+describe_posterior(diff_jittery, rope_range = rope_range)
+print("nervous")
+describe_posterior(diff_nervous, rope_range = rope_range)
+print("scared")
+describe_posterior(diff_scared, rope_range = rope_range)
+print("upset")
+describe_posterior(diff_upset, rope_range = rope_range)
 ```
 
+
+### PA
+```{r pa-model, echo=FALSE}
+PA_model <- brm(panas_score ~ panas_item * panas_nr + item_score,
+                  iter = 2000,
+                  data = PA_data,
+                  seed = 2203,
+                  file = "PA_model")
+```
+```{r summary-pa, echo=FALSE}
+summary(PA_model)
+```
+```{r extract-posteriors-pa, echo=FALSE}
+posteriors_PA <- PA_model %>% 
+  spread_draws(b_Intercept, b_panas_itemalert, b_panas_itemattentive, b_panas_itemdetermined, 
+               b_panas_itementhusiastic, b_panas_itemexcited, b_panas_iteminspired, b_panas_iteminterested, 
+               b_panas_itemproud, b_panas_itemstrong, b_panas_nr2, b_item_score,
+               `b_panas_itemalert:panas_nr2`, `b_panas_itemattentive:panas_nr2`,
+               `b_panas_itemdetermined:panas_nr2`, `b_panas_itementhusiastic:panas_nr2`,
+               `b_panas_itemexcited:panas_nr2`, `b_panas_iteminspired:panas_nr2`,
+               `b_panas_iteminterested:panas_nr2`, `b_panas_itemproud:panas_nr2`,
+               `b_panas_itemstrong:panas_nr2`) %>% 
+  mutate(active_before = b_Intercept, active_after = b_Intercept + b_panas_nr2,
+         alert_before = b_Intercept + b_panas_itemalert, alert_after = b_Intercept + b_panas_itemalert + b_panas_nr2 + `b_panas_itemalert:panas_nr2`,
+         attentive_before = b_Intercept + b_panas_itemattentive, attentive_after = b_Intercept + b_panas_itemattentive + b_panas_nr2 + `b_panas_itemattentive:panas_nr2`,
+         determined_before = b_Intercept + b_panas_itemdetermined, determined_after = b_Intercept + b_panas_itemdetermined + b_panas_nr2 + `b_panas_itemdetermined:panas_nr2`,
+         enthusiastic_before = b_Intercept + b_panas_itementhusiastic, enthusiastic_after = b_Intercept + b_panas_itementhusiastic + b_panas_nr2 + `b_panas_itementhusiastic:panas_nr2`,
+         excited_before = b_Intercept + b_panas_itemexcited, excited_after = b_Intercept + b_panas_itemexcited + b_panas_nr2 + `b_panas_itemexcited:panas_nr2`,
+         inspired_before = b_Intercept + b_panas_iteminspired, inspired_after = b_Intercept + b_panas_iteminspired + b_panas_nr2 + `b_panas_iteminspired:panas_nr2`,
+         interested_before = b_Intercept + b_panas_iteminterested, interested_after = b_Intercept + b_panas_iteminterested + b_panas_nr2 + `b_panas_iteminterested:panas_nr2`,
+         proud_before = b_Intercept + b_panas_itemproud, proud_after = b_Intercept + b_panas_itemproud + b_panas_nr2 + `b_panas_itemproud:panas_nr2`,
+         strong_before = b_Intercept + b_panas_itemstrong, strong_after = b_Intercept + b_panas_itemstrong + b_panas_nr2 + `b_panas_itemstrong:panas_nr2`) %>% 
+  select(active_before, active_after, alert_before, alert_after,
+         attentive_before, attentive_after, determined_before, determined_after,
+         enthusiastic_before, enthusiastic_after, excited_before, excited_after,
+         inspired_before, inspired_after, interested_before, interested_after,
+         proud_before, proud_after, strong_before, strong_after) %>% 
+  gather(key = "parameter", value = "posterior")
+```
+```{r differences-pa, echo=FALSE}
+# difference between before and after mood induction for item active:
+
+# before:
+neg_active_before <- posteriors_PA %>% 
+  filter(parameter == "active_before") %>% 
+  select(posterior) 
+
+# after:
+neg_active_after <- posteriors_PA %>% 
+  filter(parameter == "active_after") %>% 
+  select(posterior) 
+
+diff_active <- neg_active_after - neg_active_before # positive 
+
+# alert
+# before:
+neg_alert_before <- posteriors_PA %>% 
+  filter(parameter == "alert_before") %>% 
+  select(posterior) 
+
+# after:
+neg_alert_after <- posteriors_PA %>% 
+  filter(parameter == "alert_after") %>% 
+  select(posterior) 
+
+diff_alert <- neg_alert_after - neg_alert_before # positive 
+
+
+# attentive
+# before:
+neg_attentive_before <- posteriors_PA %>% 
+  filter(parameter == "attentive_before") %>% 
+  select(posterior) 
+
+# after:
+neg_attentive_after <- posteriors_PA %>% 
+  filter(parameter == "attentive_after") %>% 
+  select(posterior) 
+
+diff_attentive <- neg_attentive_after - neg_attentive_before # positive 
+
+
+# determined
+# before:
+neg_determined_before <- posteriors_PA %>% 
+  filter(parameter == "determined_before") %>% 
+  select(posterior) 
+
+# after:
+neg_determined_after <- posteriors_PA %>% 
+  filter(parameter == "determined_after") %>% 
+  select(posterior) 
+
+diff_determined <- neg_determined_after - neg_determined_before # positive 
+
+
+# enthusiastic
+# before:
+neg_enthusiastic_before <- posteriors_PA %>% 
+  filter(parameter == "enthusiastic_before") %>% 
+  select(posterior) 
+
+# after:
+neg_enthusiastic_after <- posteriors_PA %>% 
+  filter(parameter == "enthusiastic_after") %>% 
+  select(posterior) 
+
+diff_enthusiastic <- neg_enthusiastic_after - neg_enthusiastic_before # positive 
+
+
+# excited
+# before:
+neg_excited_before <- posteriors_PA %>% 
+  filter(parameter == "excited_before") %>% 
+  select(posterior) 
+
+# after:
+neg_excited_after <- posteriors_PA %>% 
+  filter(parameter == "excited_after") %>% 
+  select(posterior) 
+
+diff_excited <- neg_excited_after - neg_excited_before # positive 
+
+
+# inspired
+# before:
+neg_inspired_before <- posteriors_PA %>% 
+  filter(parameter == "inspired_before") %>% 
+  select(posterior) 
+
+# after:
+neg_inspired_after <- posteriors_PA %>% 
+  filter(parameter == "inspired_after") %>% 
+  select(posterior) 
+
+diff_inspired <- neg_inspired_after - neg_inspired_before # positive 
+
+
+
+# interested
+# before:
+neg_interested_before <- posteriors_PA %>% 
+  filter(parameter == "interested_before") %>% 
+  select(posterior) 
+
+# after:
+neg_interested_after <- posteriors_PA %>% 
+  filter(parameter == "interested_after") %>% 
+  select(posterior) 
+
+diff_interested <- neg_interested_after - neg_interested_before # positive 
+
+
+# proud
+# before:
+neg_proud_before <- posteriors_PA %>% 
+  filter(parameter == "proud_before") %>% 
+  select(posterior) 
+
+# after:
+neg_proud_after <- posteriors_PA %>% 
+  filter(parameter == "proud_after") %>% 
+  select(posterior) 
+
+diff_proud <- neg_proud_after - neg_proud_before # positive 
+
+
+# strong
+# before:
+neg_strong_before <- posteriors_PA %>% 
+  filter(parameter == "strong_before") %>% 
+  select(posterior) 
+
+# after:
+neg_strong_after <- posteriors_PA %>% 
+  filter(parameter == "strong_after") %>% 
+  select(posterior) 
+
+diff_strong <- neg_strong_after - neg_strong_before # positive 
+
+```
+```{r pa-posterior-descriptions, echo=FALSE}
+rope_range <- rope_range(PA_model)
+
+print("active")
+describe_posterior(diff_active, rope_range = rope_range)
+print("alert")
+describe_posterior(diff_alert, rope_range = rope_range)
+print("attentive")
+describe_posterior(diff_attentive, rope_range = rope_range)
+print("determined")
+describe_posterior(diff_determined, rope_range = rope_range)
+print("enthusiastic")
+describe_posterior(diff_enthusiastic, rope_range = rope_range)
+print("excited")
+describe_posterior(diff_excited, rope_range = rope_range)
+print("inspired")
+describe_posterior(diff_inspired, rope_range = rope_range)
+print("interested")
+describe_posterior(diff_interested, rope_range = rope_range)
+print("proud")
+describe_posterior(diff_proud, rope_range = rope_range)
+print("strong")
+describe_posterior(diff_strong, rope_range = rope_range)
+```

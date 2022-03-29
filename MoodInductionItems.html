@@ -176,92 +176,272 @@ pre code {
 <div id="mood-induction" class="section level2">
 <h2>Mood induction</h2>
 <p>Load the preprocessed data (see DataAnalysis.Rmd for details).</p>
-<pre class="r"><code>load(&quot;panas.Rdata&quot;)</code></pre>
+<pre class="r"><code>load(&quot;panas_item.Rdata&quot;)</code></pre>
 <div id="investigating-the-role-of-specific-panas-questionnaire-items-on-the-outcome" class="section level3">
 <h3>Investigating the role of specific PANAS questionnaire items on the outcome</h3>
+<pre class="r"><code>df_affect_scores &lt;- df_affect_excs %&gt;% 
+  group_by(subject_id, session_nr, mood_induction, subjectgender, panas_nr, item_affect) %&gt;% 
+  mutate(panas_score = sum(item_score)) %&gt;% 
+  ungroup() %&gt;% 
+  select(subject_id, session_nr, mood_induction, panas_nr, item_affect, panas_item, item_nr, item_score, panas_score)
+
+df_affect_mutate &lt;- df_affect_scores %&gt;% 
+  mutate(panas_score = ifelse(item_affect == &quot;NA&quot;, -panas_score, panas_score),
+         panas_item = factor(panas_item),
+         mood_induction = factor(mood_induction),
+         panas_nr = factor(panas_nr))</code></pre>
 <p>Split data into two different datasets: one for PA and one for NA</p>
 <pre class="r"><code>NA_data &lt;- df_affect_mutate %&gt;% 
-  filter(item_affect == &quot;NA&quot;) 
+  filter(item_affect == &quot;NA&quot;
+         &amp; mood_induction == &quot;positive&quot;)
 
 PA_data &lt;- df_affect_mutate %&gt;% 
-  filter(item_affect == &quot;PA&quot;)</code></pre>
+  filter(item_affect == &quot;PA&quot;
+         &amp; mood_induction == &quot;negative&quot;)</code></pre>
 <p>Run two different models to predict PA and NA scales, respectively:</p>
 <pre><code>##  Family: gaussian 
 ##   Links: mu = identity; sigma = identity 
-## Formula: panas_score ~ panas_item 
-##    Data: NA_data (Number of observations: 3800) 
+## Formula: panas_score ~ panas_item * panas_nr + item_score 
+##    Data: NA_data (Number of observations: 1900) 
 ##   Draws: 4 chains, each with iter = 2000; warmup = 1000; thin = 1;
 ##          total post-warmup draws = 4000
 ## 
 ## Population-Level Effects: 
-##                      Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS
-## Intercept               -2.17      0.06    -2.29    -2.05 1.00     1339
-## panas_itemashamed       -0.15      0.09    -0.33     0.02 1.00     1881
-## panas_itemdistressed    -0.10      0.09    -0.28     0.07 1.00     2060
-## panas_itemguilty         0.12      0.09    -0.05     0.30 1.00     1848
-## panas_itemhostile        0.06      0.09    -0.11     0.23 1.00     1993
-## panas_itemirritable     -0.07      0.09    -0.24     0.10 1.00     1972
-## panas_itemjittery        0.09      0.09    -0.09     0.26 1.00     1915
-## panas_itemnervous       -0.10      0.09    -0.28     0.07 1.00     1892
-## panas_itemscared         0.02      0.09    -0.15     0.20 1.00     1893
-## panas_itemupset          0.13      0.09    -0.05     0.31 1.00     2030
-##                      Tail_ESS
-## Intercept                2087
-## panas_itemashamed        2561
-## panas_itemdistressed     2696
-## panas_itemguilty         2666
-## panas_itemhostile        2699
-## panas_itemirritable      2669
-## panas_itemjittery        2735
-## panas_itemnervous        2878
-## panas_itemscared         2722
-## panas_itemupset          2765
+##                                Estimate Est.Error l-95% CI u-95% CI Rhat
+## Intercept                        -17.65      0.51   -18.65   -16.69 1.00
+## panas_itemashamed                  0.24      0.65    -1.04     1.49 1.00
+## panas_itemdistressed               0.24      0.66    -1.03     1.58 1.00
+## panas_itemguilty                  -0.14      0.66    -1.42     1.15 1.00
+## panas_itemhostile                 -0.15      0.66    -1.46     1.13 1.00
+## panas_itemirritable                0.37      0.65    -0.91     1.67 1.00
+## panas_itemjittery                 -0.13      0.66    -1.41     1.19 1.00
+## panas_itemnervous                  0.30      0.65    -0.99     1.60 1.00
+## panas_itemscared                  -0.03      0.66    -1.31     1.29 1.00
+## panas_itemupset                   -0.28      0.66    -1.58     1.03 1.00
+## panas_nr2                         -0.57      0.64    -1.79     0.72 1.00
+## item_score                        -1.55      0.09    -1.72    -1.39 1.00
+## panas_itemashamed:panas_nr2        0.11      0.91    -1.68     1.88 1.00
+## panas_itemdistressed:panas_nr2    -0.20      0.92    -2.04     1.59 1.00
+## panas_itemguilty:panas_nr2        -0.26      0.90    -2.03     1.50 1.00
+## panas_itemhostile:panas_nr2        0.07      0.91    -1.73     1.85 1.00
+## panas_itemirritable:panas_nr2     -0.18      0.91    -2.00     1.62 1.00
+## panas_itemjittery:panas_nr2        0.03      0.93    -1.82     1.85 1.00
+## panas_itemnervous:panas_nr2        0.07      0.92    -1.75     1.91 1.00
+## panas_itemscared:panas_nr2        -0.22      0.92    -2.07     1.61 1.00
+## panas_itemupset:panas_nr2          0.17      0.92    -1.64     1.96 1.00
+##                                Bulk_ESS Tail_ESS
+## Intercept                           774     1499
+## panas_itemashamed                  1018     1816
+## panas_itemdistressed               1041     1775
+## panas_itemguilty                   1070     2279
+## panas_itemhostile                  1032     2050
+## panas_itemirritable                1003     1843
+## panas_itemjittery                   985     1964
+## panas_itemnervous                  1171     2233
+## panas_itemscared                   1068     1945
+## panas_itemupset                    1010     1801
+## panas_nr2                           641     1480
+## item_score                         7798     2476
+## panas_itemashamed:panas_nr2         986     1927
+## panas_itemdistressed:panas_nr2     1042     2005
+## panas_itemguilty:panas_nr2         1018     1851
+## panas_itemhostile:panas_nr2        1042     1878
+## panas_itemirritable:panas_nr2      1022     2339
+## panas_itemjittery:panas_nr2        1011     1938
+## panas_itemnervous:panas_nr2         994     1868
+## panas_itemscared:panas_nr2         1092     1867
+## panas_itemupset:panas_nr2          1066     1755
 ## 
 ## Family Specific Parameters: 
 ##       Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-## sigma     1.25      0.01     1.22     1.28 1.00     6881     2929
+## sigma     4.49      0.07     4.35     4.63 1.00     6220     2959
 ## 
 ## Draws were sampled using sampling(NUTS). For each parameter, Bulk_ESS
 ## and Tail_ESS are effective sample size measures, and Rhat is the potential
 ## scale reduction factor on split chains (at convergence, Rhat = 1).</code></pre>
+<pre><code>## [1] &quot;afraid&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |        95% CI |     pd |          ROPE | % in ROPE
+## -----------------------------------------------------------------------
+## posterior |  -0.58 | [-1.79, 0.72] | 81.77% | [-0.49, 0.49] |    41.99%</code></pre>
+<pre><code>## [1] &quot;ashamed&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |        95% CI |     pd |          ROPE | % in ROPE
+## -----------------------------------------------------------------------
+## posterior |  -0.47 | [-1.74, 0.77] | 75.95% | [-0.49, 0.49] |    46.41%</code></pre>
+<pre><code>## [1] &quot;distressed&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |        95% CI |     pd |          ROPE | % in ROPE
+## -----------------------------------------------------------------------
+## posterior |  -0.78 | [-2.05, 0.50] | 88.35% | [-0.49, 0.49] |    31.81%</code></pre>
+<pre><code>## [1] &quot;guilty&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |        95% CI |     pd |          ROPE | % in ROPE
+## -----------------------------------------------------------------------
+## posterior |  -0.83 | [-2.16, 0.40] | 90.60% | [-0.49, 0.49] |    26.65%</code></pre>
+<pre><code>## [1] &quot;hostile&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |        95% CI |     pd |          ROPE | % in ROPE
+## -----------------------------------------------------------------------
+## posterior |  -0.51 | [-1.75, 0.73] | 78.30% | [-0.49, 0.49] |    45.04%</code></pre>
+<pre><code>## [1] &quot;irritable&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |        95% CI |     pd |          ROPE | % in ROPE
+## -----------------------------------------------------------------------
+## posterior |  -0.74 | [-1.96, 0.53] | 88.78% | [-0.49, 0.49] |    31.99%</code></pre>
+<pre><code>## [1] &quot;jittery&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |        95% CI |     pd |          ROPE | % in ROPE
+## -----------------------------------------------------------------------
+## posterior |  -0.55 | [-1.80, 0.78] | 79.72% | [-0.49, 0.49] |    42.67%</code></pre>
+<pre><code>## [1] &quot;nervous&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |        95% CI |     pd |          ROPE | % in ROPE
+## -----------------------------------------------------------------------
+## posterior |  -0.50 | [-1.80, 0.77] | 78.05% | [-0.49, 0.49] |    45.09%</code></pre>
+<pre><code>## [1] &quot;scared&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |        95% CI |     pd |          ROPE | % in ROPE
+## -----------------------------------------------------------------------
+## posterior |  -0.80 | [-2.03, 0.52] | 88.78% | [-0.49, 0.49] |    30.26%</code></pre>
+<pre><code>## [1] &quot;upset&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |        95% CI |     pd |          ROPE | % in ROPE
+## -----------------------------------------------------------------------
+## posterior |  -0.42 | [-1.72, 0.83] | 73.75% | [-0.49, 0.49] |    47.86%</code></pre>
+</div>
+<div id="pa" class="section level3">
+<h3>PA</h3>
 <pre><code>##  Family: gaussian 
 ##   Links: mu = identity; sigma = identity 
-## Formula: panas_score ~ panas_item 
-##    Data: PA_data (Number of observations: 3800) 
+## Formula: panas_score ~ panas_item * panas_nr + item_score 
+##    Data: PA_data (Number of observations: 1900) 
 ##   Draws: 4 chains, each with iter = 2000; warmup = 1000; thin = 1;
 ##          total post-warmup draws = 4000
 ## 
 ## Population-Level Effects: 
-##                        Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS
-## Intercept                  2.21      0.06     2.09     2.34 1.01     1223
-## panas_itemalert           -0.01      0.09    -0.18     0.17 1.00     1891
-## panas_itemattentive        0.02      0.09    -0.16     0.19 1.00     1900
-## panas_itemdetermined       0.05      0.09    -0.13     0.24 1.00     1845
-## panas_itementhusiastic    -0.07      0.09    -0.26     0.10 1.00     1858
-## panas_itemexcited          0.01      0.09    -0.18     0.18 1.00     1832
-## panas_iteminspired        -0.03      0.09    -0.21     0.15 1.00     2003
-## panas_iteminterested       0.01      0.09    -0.17     0.18 1.00     1800
-## panas_itemproud            0.02      0.09    -0.16     0.20 1.00     1822
-## panas_itemstrong          -0.02      0.09    -0.20     0.16 1.00     1781
-##                        Tail_ESS
-## Intercept                  1638
-## panas_itemalert            2759
-## panas_itemattentive        2657
-## panas_itemdetermined       2222
-## panas_itementhusiastic     2802
-## panas_itemexcited          2460
-## panas_iteminspired         2630
-## panas_iteminterested       2839
-## panas_itemproud            2027
-## panas_itemstrong           2581
+##                                  Estimate Est.Error l-95% CI u-95% CI Rhat
+## Intercept                           17.27      0.55    16.18    18.29 1.00
+## panas_itemalert                     -0.40      0.72    -1.74     1.09 1.00
+## panas_itemattentive                  0.12      0.73    -1.28     1.59 1.00
+## panas_itemdetermined                 0.06      0.70    -1.33     1.44 1.00
+## panas_itementhusiastic              -0.09      0.73    -1.50     1.34 1.00
+## panas_itemexcited                   -0.40      0.72    -1.80     1.06 1.00
+## panas_iteminspired                  -0.06      0.72    -1.46     1.38 1.00
+## panas_iteminterested                -0.19      0.71    -1.54     1.22 1.00
+## panas_itemproud                     -0.15      0.72    -1.49     1.28 1.00
+## panas_itemstrong                    -0.19      0.71    -1.57     1.26 1.00
+## panas_nr2                            2.88      0.72     1.53     4.35 1.00
+## item_score                           1.89      0.09     1.71     2.07 1.00
+## panas_itemalert:panas_nr2            0.34      1.02    -1.70     2.30 1.00
+## panas_itemattentive:panas_nr2       -0.75      1.02    -2.76     1.22 1.00
+## panas_itemdetermined:panas_nr2      -0.60      1.00    -2.57     1.40 1.00
+## panas_itementhusiastic:panas_nr2     0.08      1.01    -1.91     2.05 1.00
+## panas_itemexcited:panas_nr2          0.51      1.01    -1.55     2.45 1.00
+## panas_iteminspired:panas_nr2        -0.35      1.02    -2.41     1.60 1.00
+## panas_iteminterested:panas_nr2       0.00      1.01    -2.00     1.97 1.00
+## panas_itemproud:panas_nr2           -0.35      1.02    -2.35     1.60 1.00
+## panas_itemstrong:panas_nr2          -0.32      1.03    -2.37     1.68 1.00
+##                                  Bulk_ESS Tail_ESS
+## Intercept                             767     1224
+## panas_itemalert                      1055     2048
+## panas_itemattentive                  1072     1781
+## panas_itemdetermined                 1063     2249
+## panas_itementhusiastic               1001     1585
+## panas_itemexcited                    1120     2198
+## panas_iteminspired                   1044     2098
+## panas_iteminterested                 1034     1769
+## panas_itemproud                      1064     2032
+## panas_itemstrong                     1075     2037
+## panas_nr2                             623      843
+## item_score                           6708     2543
+## panas_itemalert:panas_nr2            1024     1657
+## panas_itemattentive:panas_nr2         979     1296
+## panas_itemdetermined:panas_nr2       1035     1954
+## panas_itementhusiastic:panas_nr2      902     1352
+## panas_itemexcited:panas_nr2          1061     1444
+## panas_iteminspired:panas_nr2          927     1457
+## panas_iteminterested:panas_nr2       1003     1393
+## panas_itemproud:panas_nr2             947     1535
+## panas_itemstrong:panas_nr2           1057     1870
 ## 
 ## Family Specific Parameters: 
 ##       Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-## sigma     1.26      0.01     1.23     1.28 1.00     6286     2803
+## sigma     4.95      0.08     4.80     5.11 1.00     5865     2830
 ## 
 ## Draws were sampled using sampling(NUTS). For each parameter, Bulk_ESS
 ## and Tail_ESS are effective sample size measures, and Rhat is the potential
 ## scale reduction factor on split chains (at convergence, Rhat = 1).</code></pre>
+<pre><code>## [1] &quot;active&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |       95% CI |   pd |          ROPE | % in ROPE
+## --------------------------------------------------------------------
+## posterior |   2.87 | [1.47, 4.27] | 100% | [-0.57, 0.57] |        0%</code></pre>
+<pre><code>## [1] &quot;alert&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |       95% CI |   pd |          ROPE | % in ROPE
+## --------------------------------------------------------------------
+## posterior |   3.23 | [1.87, 4.70] | 100% | [-0.57, 0.57] |        0%</code></pre>
+<pre><code>## [1] &quot;attentive&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |       95% CI |     pd |          ROPE | % in ROPE
+## ----------------------------------------------------------------------
+## posterior |   2.13 | [0.73, 3.48] | 99.80% | [-0.57, 0.57] |        0%</code></pre>
+<pre><code>## [1] &quot;determined&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |       95% CI |     pd |          ROPE | % in ROPE
+## ----------------------------------------------------------------------
+## posterior |   2.28 | [0.90, 3.68] | 99.92% | [-0.57, 0.57] |        0%</code></pre>
+<pre><code>## [1] &quot;enthusiastic&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |       95% CI |     pd |          ROPE | % in ROPE
+## ----------------------------------------------------------------------
+## posterior |   2.96 | [1.67, 4.43] | 99.98% | [-0.57, 0.57] |        0%</code></pre>
+<pre><code>## [1] &quot;excited&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |       95% CI |   pd |          ROPE | % in ROPE
+## --------------------------------------------------------------------
+## posterior |   3.38 | [1.99, 4.84] | 100% | [-0.57, 0.57] |        0%</code></pre>
+<pre><code>## [1] &quot;inspired&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |       95% CI |   pd |          ROPE | % in ROPE
+## --------------------------------------------------------------------
+## posterior |   2.53 | [1.14, 4.00] | 100% | [-0.57, 0.57] |        0%</code></pre>
+<pre><code>## [1] &quot;interested&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |       95% CI |   pd |          ROPE | % in ROPE
+## --------------------------------------------------------------------
+## posterior |   2.87 | [1.53, 4.31] | 100% | [-0.57, 0.57] |        0%</code></pre>
+<pre><code>## [1] &quot;proud&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |       95% CI |   pd |          ROPE | % in ROPE
+## --------------------------------------------------------------------
+## posterior |   2.54 | [1.13, 3.89] | 100% | [-0.57, 0.57] |        0%</code></pre>
+<pre><code>## [1] &quot;strong&quot;</code></pre>
+<pre><code>## Summary of Posterior Distribution
+## 
+## Parameter | Median |       95% CI |   pd |          ROPE | % in ROPE
+## --------------------------------------------------------------------
+## posterior |   2.56 | [1.20, 3.94] | 100% | [-0.57, 0.57] |        0%</code></pre>
 </div>
 </div>
 </div>
