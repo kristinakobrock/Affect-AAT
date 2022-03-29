@@ -1,4 +1,4 @@
-
+# models are ignored when they are too large:
 CC_model.rds
 CC_model_2block.rds
 CC_model_stimulusvalence.rds
@@ -6,5 +6,6 @@ stimulus_model.rds
 panas_model.rds
 stimulus_model.rds
 stimulus_model.rds
-*.rds
+
+# jpg-files are ignored, they are doubles anyways:
 *.jpg
