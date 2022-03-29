@@ -274,7 +274,8 @@ diff_upset <- pos_upset_after - pos_upset_before # positive
 
 ```
 ```{r na-posterior-descriptions, echo=FALSE}
-rope_range <- rope_range(NA_model)
+# using the same rope range as in the PANAS main analysis
+rope_range <- c(-2.26, 2.26)
 
 print("afraid")
 describe_posterior(diff_afraid, rope_range = rope_range)
@@ -480,7 +481,7 @@ diff_strong <- neg_strong_after - neg_strong_before # positive
 
 ```
 ```{r pa-posterior-descriptions, echo=FALSE}
-rope_range <- rope_range(PA_model)
+rope_range <- c(-2.26, 2.26)
 
 print("active")
 describe_posterior(diff_active, rope_range = rope_range)
