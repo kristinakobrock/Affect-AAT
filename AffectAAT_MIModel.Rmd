@@ -94,7 +94,7 @@ df_aat_plot %>%
   # plotting both mood_induction and condition using facet_wrap
   ggplot(aes(x = condition, y = log_RT_s, color = mood_induction)) +
   facet_wrap(~ mood_induction) +
-  geom_point(alpha = 0.1, size = 1,
+  geom_point(alpha = 0.05, size = 1,
              # adding a little bit of jitter to make the points visible
              position = position_jitter(width = 0.1)) +
   # adding means and a connecting line in order to make the differences between locations and conditions 
@@ -138,6 +138,59 @@ df_aat_plot %>%
   guides(fill = "none", color = "none") +
   ylim(-0.2, 0.2)
 ```
+combined in one plot:
+```{r plot-AAB-2-in-1, echo=FALSE}
+plot_1 <- df_aat_plot %>% 
+  # plotting both mood_induction and condition using facet_wrap
+  ggplot(aes(x = condition, y = log_RT_s, color = mood_induction)) +
+  facet_wrap(~ mood_induction) +
+  geom_point(alpha = 0.05, size = 1,
+             # adding a little bit of jitter to make the points visible
+             position = position_jitter(width = 0.1)) +
+  # adding means and a connecting line in order to make the differences between locations and conditions 
+  # visible
+  geom_point(data = df_aat_agg1,
+             aes(x = condition, y = mean, fill = mood_induction), size = 4) +
+  geom_line(data = df_aat_agg1,
+            aes(x = condition, y = mean, group = mood_induction)) +
+  # axes labels and titles
+  labs(
+    y = "(scaled)        ",
+    x = ""
+  ) +
+  guides(fill = "none", color = "none") 
+
+mylabeller <- function(var) {
+  result <- ""
+  return(result)
+}
+
+# plot closer
+plot_2 <- df_aat_plot %>% 
+  # plotting both mood_induction and condition using facet_wrap
+  ggplot(aes(x = condition, y = log_RT_s, color = mood_induction)) +
+  facet_wrap(~ mood_induction, labeller=mylabeller) +
+  geom_point(alpha = 0.1, size = 1,
+             # adding a little bit of jitter to make the points visible
+             position = position_jitter(width = 0.3)) +
+  # adding means and a connecting line in order to make the differences between locations and conditions 
+  # visible
+  geom_point(data = df_aat_agg1,
+             aes(x = condition, y = mean, fill = mood_induction), size = 6) +
+  geom_line(data = df_aat_agg1,
+            aes(x = condition, y = mean, group = mood_induction), size = 1) +
+  # axes labels and titles
+  labs(
+    y = "      log(RT)",
+    x = "condition by mood induction"
+  ) +
+  guides(fill = "none", color = "none") +
+  ylim(-0.2, 0.2)
+
+ggarrange(plot_1, plot_2, nrow=2, heights = c(1,1.2), labels=c("AUTO")) +
+  ggtitle("Reaction time data by condition and mood induction\n") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", size=20))
+```
 
 Visual inspection reveals a small difference between congruent and incongruent conditions, but not between positive and negative mood induction. Reaction times in the incongruent condition seem to be longer than reaction times in the congruent condition for both positive and negative mood induction conditions (although the scale is really, really small and the effect seems to be really small as well).
 
@@ -148,11 +201,10 @@ The relation RT ~ mood_induction * condition is hierarchical and modeled with gr
 
 Fitting a linear model with a gaussian distribution.
 ```{r data-log-model, echo=FALSE}
-# contrast-coding independent variables
+# selecting relevant data
 df_aat_log1 <- df_aat_log %>% 
   mutate(mood_induction = factor(ifelse(mood_induction == "p", "positive", "negative")),
          condition = factor(condition)) %>% 
-  rename(stimulus_valence = stimulus) %>% 
   select(subject_id, trial, condition, mood_induction, log_RT_s, pictures, stimulus_valence, response)
 head(df_aat_log1)
 ```
@@ -192,7 +244,12 @@ summary(fit_MImodel, priors=TRUE)
 ```
 
 ```{r pp-check-mi-model, echo=FALSE}
-pp_check(fit_MImodel, ndraws = 50, type = "dens_overlay")
+color_scheme_set("viridisA")
+pp_plot <- pp_check(fit_MImodel, ndraws = 50, type = "dens_overlay")
+
+pp_plot +
+  labs(title = "Main model: Posterior predictive checks") +
+  theme(plot.title = element_text(hjust = 0.5, size=20))
 ```
 
 The model fit is okay, but it's also very obvious that the normal link function failed to capture the skewed distribution of the data. But due to previous studies that successfully used a linear model with normal link function, the fit is considered good enough.
@@ -234,19 +291,29 @@ posteriors <- posteriors %>%
 ggplot(data = posteriors, 
        aes(x = condition, y = mean_posterior,
            color = mood_induction, fill = mood_induction)) + 
+  #geom_point(data = df_aat_plot, aes(x = condition, y = log_RT_s, color = mood_induction), alpha = 0.1, size = 1,
+             # adding a little bit of jitter to make the points visible
+  #           position = position_jitter(width = 0.3)) +
   geom_errorbar(aes(ymin = `95lowerCrI`, ymax = `95higherCrI`),
-                width = 0.2, color = "grey") +
+                width = 0.2, color = "grey", size=1) +
   geom_line(aes(group = 1)) +
   geom_point(size = 5) +
+  geom_point(data = df_aat_agg1,
+             aes(x = condition, y = mean, fill = mood_induction), size = 4) +
+  geom_line(data = df_aat_agg1,
+            aes(x = condition, y = mean, group = mood_induction), linetype="dashed") +
   facet_grid(~mood_induction) +
   guides(color = "none", fill = "none") +
+  #ylim(-0.3, 0.3) +
   labs(x = "condition by mood induction",
        y = "posterior log(RT) (scaled)",
-       title = "Posterior estimates with credible intervals")
+       title = "Posterior estimates with CrIs and data means") +
+  theme(plot.title = element_text(hjust = 0.5))
 ```
 
 Posterior estimates match the data very well. The posterior means are nearly the same as the means from the data distribution (compare to figure above).
 
+#### Difference distributions for the difference in reaction times between congruent and incongruent condition:
 ```{r differences, echo=FALSE}
 
 # difference between congruent and incongruent condition regardless of mood induction:
@@ -324,7 +391,9 @@ plot_3 <- diff_condition_posMI %>%
   ) +
   ylim(0, 13)
 
-ggarrange(plot_1, ggarrange(plot_2, plot_3, ncol=2), nrow=2)
+ggarrange(plot_1, ggarrange(plot_2, plot_3, ncol=2), nrow=2) +
+  ggtitle("Main model: Posterior difference distributions\n") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", size=20))
 ```
 
 ```{r difference-in-ms, echo=FALSE}
@@ -379,7 +448,9 @@ plot_3 <- diff_condition_posMI_ms %>%
   ) +
   ylim(0, 0.05)
 
-ggarrange(plot_1, ggarrange(plot_2, plot_3, ncol=2), nrow=2)
+ggarrange(plot_1, ggarrange(plot_2, plot_3, ncol=2), nrow=2) +
+  ggtitle("Main model: Posterior difference distributions in ms\n") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", size=20))
 ```
 ```{r describe-differences-ms, echo=FALSE}
 
@@ -411,7 +482,7 @@ differences_in_ms <- tibble(rbind(
 differences_in_ms
 ```
 
-```{r bayestests, echo=FALSE}
+```{r bayestests-mimodel, echo=FALSE}
 MImodel_rope_range = rope_range(fit_MImodel) # calculates the rope range using the tenth (1/10 = 0.1) of the standard deviation (SD) of the response variable (panas_score), which can be considered as a “negligible” effect size (Cohen, 1988)
 
 print("condition difference regardless of mood induction:")
@@ -432,6 +503,44 @@ print("negative AAB in positive AAB:")
 posterior_diff_AAB2 <- describe_posterior(diff_condition_negMI, centrality = "none", rope_range = c(posterior_diffc_posMI$CI_low, posterior_diffc_posMI$CI_high), test = c("rope"))
 print(posterior_diff_AAB2)
 
+```
+
+#### Difference distributions for the difference in reaction times between positive and negative mood induction:
+```{r mi-differences, echo=FALSE}
+
+# difference between positive and negative mood induction regardless of condition:
+
+# positive mood induction:
+post_positive <- posteriors_MImodel %>% 
+  filter(parameter == "incongruent_positive" | parameter == "congruent_positive") %>% 
+  select(posterior) 
+
+# negative mood induction:
+post_negative <- posteriors_MImodel %>% 
+  filter(parameter == "incongruent_negative" | parameter == "congruent_negative") %>% 
+  select(posterior) 
+
+diff_MI <- post_negative - post_positive # positive when RTs after negative MI are longer than after positive MI
+
+```
+```{r plot-mi-difference, echo=FALSE}
+diff_MI %>% 
+  ggplot(aes(x = posterior)) +
+  geom_density(size=1, color = gray, fill = gray, alpha = 0.5) +
+  geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
+  geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
+  labs(
+    x = "mood induction posterior difference"
+  ) 
+
+```
+
+
+```{r bayestests, echo=FALSE}
+print("mood induction difference regardless of condition:")
+posterior_diffMI <- describe_posterior(diff_MI, centrality = "median", ci = 0.95, ci_method = "hdi", rope_range = MImodel_rope_range, rope_ci = 0.95) %>% print()
 ```
 
 The hypothesis tests according to the hypotheses above support the results:
