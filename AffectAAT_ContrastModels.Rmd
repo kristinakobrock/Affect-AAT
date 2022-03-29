@@ -1,0 +1,218 @@
+---
+title: "Affect-AAT Contrast Models"
+author: "Kristina Kobrock"
+date: "15 3 2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, message = FALSE, warning = FALSE)
+```
+```{r libraries, include=FALSE, message=FALSE, warning=FALSE}
+# package to extract R data from matlab files
+library(R.matlab)
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package for plotting (together with ggplot)
+library(ggpubr)
+
+# package to visualize 
+library(bayesplot)
+
+# package to extract CrIs
+library(bayestestR)
+
+# package to extract HDIs
+library(HDInterval)
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+# Green RYB: 5EB045, Barn red: 811F0E, Charcoal: 424B54, maximum yellow red: FFBA49, copper crayola: DE8F6E
+green <- "#5EB045"
+red <- "#811F0E"
+gray <- "#424B54"
+yellow <- "#FFBA49"
+copper <- "#DE8F6E"
+black <- "#000000"
+project_colors = c(red, green, gray, yellow, copper, black)
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
+```
+
+# The role of affect in the Automatic Approach Bias: An empirical investigation.
+
+## The effect of mood induction in the AAB
+Load the preprocessed data (see DataAnalysis.Rmd for details).
+```{r load-data}
+load("affect-aat.Rdata")
+```
+
+```{r backtransform-function, echo=FALSE}
+backtransform_RT <- function(list, df=df_aat_log1) {
+  round(exp(list * attr(df$log_RT_s, 'scaled:scale') + attr(df$log_RT_s, 'scaled:center')),2)
+}
+```
+
+### Investigating the role of mood induction with contrast-coded models
+```{r contrast-code, echo=FALSE}
+# contrast-coding independent variables
+df_aat_log1 <- df_aat_log %>% 
+  mutate(mood_induction = ifelse(mood_induction == "p", 0.5, -0.5),
+         condition = ifelse(condition == "congruent", 0.5, -0.5),
+         stimulus_valence = ifelse(stimulus_valence == "positive", 0.5, -0.5)) %>% 
+  select(subject_id, trial, condition, mood_induction, log_RT_s, pictures, stimulus_valence, response)
+head(df_aat_log1)
+```
+```{r priors, echo=FALSE}
+priors <- c(set_prior("student_t(3, 0, 2)", class = "Intercept"), # centered on zero, ranges between -10 and 10, most values being closer to zero
+            set_prior("student_t(3, 0, 2)", class = "sigma"),
+            set_prior("normal(0, 10)", class = "b"), # agnostic prior on fixed effects
+            set_prior("student_t(3, 0, 2)", class = "sd") # weakly informative prior on random effects
+            ) 
+```
+```{r CC-model, echo=FALSE}
+
+fit_CCmodel <- brm(log_RT_s ~ condition * mood_induction
+                + (condition * mood_induction || subject_id), # I expect differences between individual subjects with regards to condition (correlation not needed), but not with stimulus_valence
+                 data = df_aat_log1,
+                 family = gaussian(), # model fit is much better with skew_normal() than a normal gaussian() but doesn't converge
+                 prior = priors,     
+                 iter = 10000,
+                 cores = getOption("mc.cores", 2), # can be set to number of cores the hardware possesses (in my case 2) up to the number of chains (4 by default)
+                 seed = 4031,
+                 file = "CC_model"
+                 )
+```
+```{r}
+summary(fit_CCmodel)
+```
+```{r extract-posteriors, echo=FALSE}
+posteriors_MImodel <- fit_CCmodel %>%
+  # just taking the population level effects here
+  spread_draws(b_Intercept, b_condition,
+               b_mood_induction, `b_condition:mood_induction`) %>% 
+  select(b_Intercept, b_condition, b_mood_induction, `b_condition:mood_induction`) %>% 
+  gather(key = "parameter", value = "posterior") 
+
+```
+```{r bayestests, echo=FALSE}
+CC_model_rope_range <- rope_range(fit_CCmodel)
+
+posterior_condition <- describe_posterior(fit_CCmodel, centrality = "median", ci = 0.95, ci_method = "hdi", rope_range = CC_model_rope_range, rope_ci = 0.95) %>% print()
+```
+
+#### A contrast-coded model on the data from two blocks only:
+```{r load-2-block-data, echo=FALSE}
+load("affect-aat-2-block.Rdata")
+```
+```{r contrast-code-2-block, echo=FALSE}
+# contrast-coding independent variables
+df_aat_log1 <- df_aat_log %>% 
+  mutate(mood_induction = ifelse(mood_induction == "p", 0.5, -0.5),
+         condition = ifelse(condition == "congruent", 0.5, -0.5),
+         stimulus_valence = ifelse(stimulus_valence == "positive", 0.5, -0.5)) %>% 
+  select(subject_id, trial, condition, mood_induction, log_RT_s, pictures, stimulus_valence, response)
+head(df_aat_log1)
+```
+```{r priors-2-block, echo=FALSE}
+priors <- c(set_prior("student_t(3, 0, 3)", class = "Intercept"), # model-specific parameters weakly informed by the data
+                      set_prior("student_t(3, 0, 3)", class = "sigma"),
+                      set_prior("normal(0, 10)", class = "b"), # agnostic prior on fixed effects
+                      set_prior("student_t(3, 0, 3)", class = "sd") # weakly informative prior on random effects
+                      ) 
+```
+```{r constrpriors, echo=FALSE}
+constr_priors <- c(set_prior("student_t(5, -0.2, 1)", class = "Intercept"), # constraining prior informed by previous model fit and data: centered on -0.2, ranges between -5 and 5, most values being closer to mu
+            set_prior("student_t(3, 0, 2)", class = "sigma"),
+            set_prior("normal(0, 10)", class = "b"), # agnostic prior on fixed effects
+            set_prior("student_t(3, 0, 2)", class = "sd") # weakly informative prior on random effects
+            ) 
+```
+```{r CC-model-2-block, echo=FALSE}
+
+fit_CCmodel_2block <- brm(log_RT_s ~ condition * mood_induction
+                + (condition * mood_induction || subject_id), # I expect differences between individual subjects with regards to condition (correlation not needed), but not with stimulus_valence
+                 data = df_aat_log1,
+                 family = gaussian(), # model fit is much better with skew_normal() than a normal gaussian() but doesn't converge
+                 prior = constr_priors,     
+                 iter = 10000,
+                 cores = getOption("mc.cores", 2), # can be set to number of cores the hardware possesses (in my case 2) up to the number of chains (4 by default)
+                 seed = 1703,
+                 file = "CC_model_2block"
+                 )
+```
+```{r summary-2-block, echo=FALSE}
+summary(fit_CCmodel_2block, priors=TRUE)
+```
+
+```{r bayestests-2-block, echo=FALSE}
+CC_model_rope_range <- rope_range(fit_CCmodel_2block)
+
+posterior_condition <- describe_posterior(fit_CCmodel_2block, centrality = "median", ci = 0.95, ci_method = "hdi", rope_range = CC_model_rope_range, rope_ci = 0.95) %>% print()
+```
+#### A contrast-coded model including stimulus valence as a population-level effect:
+```{r stimulus-model-RE, echo=FALSE}
+
+fit_stimulusModelRE <- brm(log_RT_s ~ condition * mood_induction * stimulus_valence
+                           + (condition * mood_induction || subject_id),
+                           data = df_aat_log1,
+                           family = gaussian(),
+                           prior = constr_priors,
+                           cores = getOption("mc.cores", 2),
+                           iter = 10000, 
+                           seed = 1703,
+                           file = "CC_model_stimulusvalence"
+                           )
+```
+```{r summary-stimulus, echo=FALSE}
+summary(fit_stimulusModelRE, priors = TRUE)
+```
+```{r}
+describe_posterior(fit_stimulusModelRE, centrality = "median", ci = 0.95, ci_method = "hdi")#, test=c("p_direction"))
+```
+```{r extract-posteriors-stimulus, echo=FALSE}
+posteriors_stimulus_model <- fit_stimulusModelRE %>%
+  # just taking the population level effects here
+  spread_draws(b_Intercept, b_condition,
+               b_mood_induction, b_stimulus_valence,
+               `b_condition:mood_induction`, `b_condition:stimulus_valence`,
+               `b_mood_induction:stimulus_valence`, `b_condition:mood_induction:stimulus_valence`) %>% 
+  select(b_Intercept, b_condition,
+               b_mood_induction, b_stimulus_valence,
+               `b_condition:mood_induction`, `b_condition:stimulus_valence`,
+               `b_mood_induction:stimulus_valence`, `b_condition:mood_induction:stimulus_valence`) %>% 
+  gather(key = "parameter", value = "posterior") 
+
+main_effect_MI <- posteriors_stimulus_model %>% 
+  filter(parameter == "b_mood_induction") %>% 
+  select(posterior) 
+
+interaction_MI_SV <- posteriors_stimulus_model %>% 
+  filter(parameter == "b_mood_induction:stimulus_valence") %>% 
+  select(posterior)
+```
+```{r rope-stimulus}
+rope(main_effect_MI)
+rope(interaction_MI_SV)
+```
+
