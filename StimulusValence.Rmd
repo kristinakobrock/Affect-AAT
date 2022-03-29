@@ -77,7 +77,6 @@ backtransform_RT <- function(list, df=df_aat_log1) {
 df_aat_log1 <- df_aat_log %>% 
   mutate(mood_induction = factor(ifelse(mood_induction == "p", "positive", "negative")),
          condition = factor(condition)) %>% 
-  rename(stimulus_valence = stimulus) %>% 
   select(subject_id, trial, condition, mood_induction, log_RT_s, pictures, stimulus_valence)
 head(df_aat_log1)
 ```
@@ -89,7 +88,7 @@ priors <- c(set_prior("student_t(3, 0, 3)", class = "Intercept"), # model-specif
                       ) 
 ```
 
-One model where stimulus_valence is added without interaction:
+One simple model where stimulus_valence is added without interaction:
 ```{r stimulus-model-no-interaction, echo=FALSE}
 fit_stimulusModel <- brm(log_RT_s ~ condition * mood_induction + stimulus_valence,
                          data = df_aat_log1,
@@ -97,7 +96,7 @@ fit_stimulusModel <- brm(log_RT_s ~ condition * mood_induction + stimulus_valenc
                          prior = priors,     
                          iter = 2000, 
                          seed = 228,
-                         file = "stimulus_model"
+                         file = "simple_stimulus_model"
                          )
 ```
 ```{r}
@@ -105,17 +104,26 @@ summary(fit_stimulusModel, priors=TRUE)
 ```
 The model output suggests something that I did not expect: a main effect of stimulus_valence, but a negative main effect suggesting that actually positive instead of negative reaction times are shorter.
 
-I'm running a model with interaction to see whether this main effect is influenced by a specific condition in the experiment:
-```{r stimulus-model, echo=FALSE}
+I'm running a model with interaction and group-level effects to see whether this main effect is influenced by a specific condition in the experiment:
+```{r constrpriors, echo=FALSE}
+constr_priors <- c(set_prior("student_t(5, -0.2, 1)", class = "Intercept"), # constraining prior informed by previous model fit and data: centered on -0.2, ranges between -5 and 5, most values being closer to mu
+            set_prior("student_t(3, 0, 2)", class = "sigma"),
+            set_prior("normal(0, 10)", class = "b"), # agnostic prior on fixed effects
+            set_prior("student_t(3, 0, 2)", class = "sd") # weakly informative prior on random effects
+            ) 
+```
+```{r stimulus-model-RE, echo=FALSE}
 
-fit_stimulusModelInt <- brm(log_RT_s ~ condition * mood_induction * stimulus_valence,
-                             data = df_aat_log1,
-                             family = gaussian(),
-                             prior = priors_log_model,     
-                             iter = 2000, 
-                             seed = 228,
-                             file = "stimulus_model_interaction"
-                             )
+fit_stimulusModelInt <- brm(log_RT_s ~ condition * mood_induction * stimulus_valence
+                           + (condition * mood_induction || subject_id),
+                           data = df_aat_log1,
+                           family = gaussian(),
+                           prior = constr_priors,
+                           cores = getOption("mc.cores", 2),
+                           iter = 10000, 
+                           seed = 1703,
+                           file = "stimulus_model"
+                           )
 ```
 ```{r log-model-summary, echo=FALSE}
 summary(fit_stimulusModelInt, priors = TRUE)
@@ -156,9 +164,9 @@ df_aat_log1 %>%
   ylim(-0.2, 0.2)
 ```
 
-```{r extract-posteriors, echo=FALSE}
-posteriors_stimulusModel <- fit_stimulusModelInt %>%
-  # just taking the population level effects here
+```{r extract-posteriors-cond, echo=FALSE}
+posteriors_stimulusModel_cond <- fit_stimulusModelInt %>%
+  # just taking the population level effects with regards to stimulus valence and condition here
   spread_draws(b_Intercept, b_conditionincongruent,
                #b_mood_inductionpositive, 
                b_stimulus_valencepositive,
@@ -180,17 +188,17 @@ posteriors_stimulusModel <- fit_stimulusModelInt %>%
 
 ```
 
-```{r differences, echo=FALSE}
+```{r differences-cond, echo=FALSE}
 
 # difference between congruent and incongruent condition regardless of mood induction:
 
 # negative stimulus valences:
-post_negative <- posteriors_stimulusModel %>% 
+post_negative <- posteriors_stimulusModel_cond %>% 
   filter(parameter == "congruent_negative" | parameter == "incongruent_negative") %>% 
   select(posterior) 
 
 # positive stimulus valences:
-post_positive <- posteriors_stimulusModel %>% 
+post_positive <- posteriors_stimulusModel_cond %>% 
   filter(parameter == "congruent_positive" | parameter == "incongruent_positive") %>% 
   select(posterior) 
 
@@ -198,11 +206,11 @@ diff_valence <- post_positive - post_negative # positive when RTs in response to
 
 
 # congruent condition:
-post_congruent_neg <- posteriors_stimulusModel %>% 
+post_congruent_neg <- posteriors_stimulusModel_cond %>% 
   filter(parameter == "congruent_negative") %>% 
   select(posterior) 
 
-post_congruent_pos <- posteriors_stimulusModel %>% 
+post_congruent_pos <- posteriors_stimulusModel_cond %>% 
   filter(parameter == "congruent_positive") %>% 
   select(posterior)
 
@@ -210,11 +218,11 @@ diff_valence_congruent <- post_congruent_pos - post_congruent_neg # positive whe
 
 
 # incongruent condition:
-post_incongruent_neg <- posteriors_stimulusModel %>% 
+post_incongruent_neg <- posteriors_stimulusModel_cond %>% 
   filter(parameter == "incongruent_negative") %>% 
   select(posterior)
 
-post_incongruent_pos <- posteriors_stimulusModel %>% 
+post_incongruent_pos <- posteriors_stimulusModel_cond %>% 
   filter(parameter == "incongruent_positive") %>% 
   select(posterior) 
 
@@ -236,7 +244,7 @@ plot_1 <- diff_valence %>%
 
 plot_2 <- diff_valence_congruent %>% 
   ggplot(aes(x = posterior)) +
-  geom_density(size=1, color = gray, fill = red, alpha = 0.5) +
+  geom_density(size=1, color = gray, fill = yellow, alpha = 0.5) +
   geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
   geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
   geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
@@ -248,7 +256,7 @@ plot_2 <- diff_valence_congruent %>%
 
 plot_3 <- diff_valence_incongruent %>% 
   ggplot(aes(x = posterior)) +
-  geom_density(size=1, color = gray, fill = green, alpha = 0.5) +
+  geom_density(size=1, color = gray, fill = yellow, alpha = 0.5) +
   geom_vline(aes(xintercept = median(posterior)), size=1, color=gray) +
   geom_vline(aes(xintercept = HDInterval::hdi(posterior)[1]), color=gray, linetype="dashed") +
   geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
@@ -262,7 +270,7 @@ ggarrange(plot_1, ggarrange(plot_2, plot_3, ncol=2), nrow=2)
 ```
 
 The difference in reaction times does not seem to depend on condition. 
-```{r extract-posteriors2, echo=FALSE}
+```{r extract-posterior-mi, echo=FALSE}
 posteriors_stimulusModelMI <- fit_stimulusModelInt %>%
   # just taking the population level effects here
   spread_draws(b_Intercept, 
@@ -287,7 +295,7 @@ posteriors_stimulusModelMI <- fit_stimulusModelInt %>%
 
 ```
 
-```{r differences2, echo=FALSE}
+```{r differences-mi, echo=FALSE}
 
 # difference between valence and mood induction regardless of condition:
 
@@ -349,7 +357,7 @@ plot_2 <- diff_valence_negMI %>%
   geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
   geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
   labs(
-    x = "after negative mood induction"
+    x = "after negative mood ind."
   ) +
   #ylim(0, 13)
   xlim(-0.25, 0.05)
@@ -362,12 +370,14 @@ plot_3 <- diff_valence_posMI %>%
   geom_vline(aes(xintercept = HDInterval::hdi(posterior)[2]), color=gray, linetype="dashed") +
   geom_vline(aes(xintercept = 0), color=red, linetype="dashed") +
   labs(
-    x = "after positive mood induction"
+    x = "after positive mood ind."
   ) +
   #ylim(0, 15)
   xlim(-0.25, 0.05)
   
-ggarrange(plot_1, ggarrange(plot_2, plot_3, ncol=2), nrow=2)
+ggarrange(plot_1, ggarrange(plot_2, plot_3, ncol=2), nrow=2) +
+  ggtitle("Stimulus model: Posterior difference distributions\n") +
+  theme(plot.title = element_text(hjust = 0.5, face="bold", size=20))
 ```
 ```{r difference-in-ms, echo=FALSE}
 # transform all posterior estimates to the ms scale:
@@ -416,7 +426,7 @@ differences_in_ms
 
 The difference seems to depend on the mood induction condition. Especially in the positive mood induction condition, the reaction times are shorter for positive than for negative stimuli.
 ```{r bayestests, echo=FALSE}
-stimulusModel_rope_range = rope_range(fit_stimulusModel) # calculates the rope range using the tenth (1/10 = 0.1) of the standard deviation (SD) of the response variable (panas_score), which can be considered as a “negligible” effect size (Cohen, 1988)
+stimulusModel_rope_range = rope_range(fit_stimulusModelInt) # calculates the rope range using the tenth (1/10 = 0.1) of the standard deviation (SD) of the response variable (panas_score), which can be considered as a “negligible” effect size (Cohen, 1988)
 
 print("valence difference regardless of condition:")
 posterior_diffcondition <- describe_posterior(diff_valence, centrality = "median", ci = 0.95, ci_method = "hdi", rope_range = stimulusModel_rope_range, rope_ci = 0.95) %>% print()
@@ -428,6 +438,135 @@ print("valence difference after positive mood induction:")
 posterior_diffv_posMI <- describe_posterior(diff_valence_posMI, rope_range = stimulusModel_rope_range) %>% print()
 
 ```
+```{r}
+describe_posterior(fit_stimulusModelInt, centrality = "median", ci = 0.95, ci_method = "hdi", test = c("p_direction"))
+```
+
+```{r plot-data-agg2, echo=FALSE}
+# creating an aggregated data frame grouped by mood_induction and condition with the respective means
+df_aat_agg2 <- df_aat_log1 %>% 
+  group_by(stimulus_valence, mood_induction) %>% 
+  summarise(mean = mean(log_RT_s)) 
+```
+```{r plot-closer-stimulus-valence2, echo=FALSE}
+# plot closer
+df_aat_log1 %>% 
+  # plotting both mood_induction and condition using facet_wrap
+  ggplot(aes(x = stimulus_valence, y = log_RT_s, color = stimulus_valence)) +
+  facet_wrap(~ mood_induction) +
+  geom_point(alpha = 0.1, size = 1,
+             # adding a little bit of jitter to make the points visible
+             position = position_jitter(width = 0.3)) +
+  # adding means and a connecting line in order to make the differences between locations and conditions 
+  # visible
+  geom_line(data = df_aat_agg2,
+            aes(x = stimulus_valence, y = mean, group = mood_induction), color=gray) +
+  geom_point(data = df_aat_agg2,
+             aes(x = stimulus_valence, y = mean, fill = stimulus_valence), size = 6) +
+  # axes labels and titles
+  labs(
+    title = "Effects of stimulus valence and condition on RT",
+    subtitle = "zoomed in",
+    y = "log(RT) (scaled)",
+    x = "stimulus valence by mood induction"
+  ) +
+  guides(fill = "none", color = "none") +
+  ylim(-0.2, 0.2)
+```
+```{r plot-stimulus-cond-mi, echo=FALSE}
+plot_cond <- df_aat_log1 %>% 
+  # plotting both mood_induction and condition using facet_wrap
+  ggplot(aes(x = stimulus_valence, y = log_RT_s, color = stimulus_valence)) +
+  facet_wrap(~ condition) +
+  geom_point(alpha = 0.1, size = 1,
+             # adding a little bit of jitter to make the points visible
+             position = position_jitter(width = 0.3)) +
+  # adding means and a connecting line in order to make the differences between locations and conditions 
+  # visible
+  geom_line(data = df_aat_agg1,
+            aes(x = stimulus_valence, y = mean, group = condition), color=gray) +
+  geom_point(data = df_aat_agg1,
+             aes(x = stimulus_valence, y = mean, fill = stimulus_valence), size = 4) +
+  # axes labels and titles
+  labs(
+    y = "log(RT) (scaled)",
+    x = "condition"
+  ) +
+  guides(fill = "none", color = "none") +
+  ylim(-0.2, 0.2)
+
+plot_MI <- df_aat_log1 %>% 
+  # plotting both mood_induction and condition using facet_wrap
+  ggplot(aes(x = stimulus_valence, y = log_RT_s, color = stimulus_valence)) +
+  facet_wrap(~ mood_induction) +
+  geom_point(alpha = 0.1, size = 1,
+             # adding a little bit of jitter to make the points visible
+             position = position_jitter(width = 0.3)) +
+  # adding means and a connecting line in order to make the differences between locations and conditions 
+  # visible
+  geom_line(data = df_aat_agg2,
+            aes(x = stimulus_valence, y = mean, group = mood_induction), color=gray) +
+  geom_point(data = df_aat_agg2,
+             aes(x = stimulus_valence, y = mean, fill = stimulus_valence), size = 4) +
+  # axes labels and titles
+  labs(
+    x = "mood induction",
+    y = ""
+  ) +
+  guides(fill = "none", color = "none") +
+  ylim(-0.2, 0.2)
+
+ggarrange(plot_cond, plot_MI)
+```
+
+```{r plot-stimulus-hdi-posteriors, echo=FALSE}
+# Extract the posteriors
+posteriors_MI <- posteriors_stimulusModelMI %>% 
+  group_by(parameter) %>% 
+  summarise(mean_posterior = mean(posterior),
+            `95lowerCrI` = HDInterval::hdi(posterior, credMass = 0.95)[1],
+            `95higherCrI` = HDInterval::hdi(posterior, credMass = 0.95)[2]) %>% 
+  mutate(stimulus_valence = ifelse(parameter == "negMI_negative" | parameter == "posMI_negative",
+                            "negative", "positive"),
+         mood_induction = ifelse(parameter == "negMI_negative" | parameter == "negMI_positive",
+                                 "negative mood ind.", "positive mood ind.")
+  ) %>% 
+  select(mood_induction, stimulus_valence, mean_posterior, `95lowerCrI`, `95higherCrI`) 
+
+# prepare data frames for plotting:
+df_aat_log1_plot <- df_aat_log1 %>% 
+  mutate(mood_induction = ifelse(mood_induction == "positive", "positive mood ind.", "negative mood ind.")) %>% 
+  arrange(mood_induction)
+df_aat_agg2_plot <- df_aat_agg2 %>% 
+  mutate(mood_induction = ifelse(mood_induction == "positive", "positive mood ind.", "negative mood ind."))
+
+# plot
+ggplot(data = posteriors_MI, 
+       aes(x = stimulus_valence, y = mean_posterior,
+           color = stimulus_valence)) + 
+  geom_point(data = df_aat_log1_plot, 
+             aes(x = stimulus_valence, y = log_RT_s), alpha = 0.01, size = 2, 
+             # manually color coding for mood_induction:
+             color=c(rep(red, 28846/2), rep(green, 28846/2)),
+             # adding a little bit of jitter to make the points visible
+             position = position_jitter(width = 0.3)) +
+  geom_errorbar(aes(ymin = `95lowerCrI`, ymax = `95higherCrI`),
+                width = 0.2, color = "gray", size=1) +
+  geom_line(aes(group = 1), color=gray) +
+  geom_point(size = 5) +
+  geom_line(data = df_aat_agg2_plot,
+            aes(x = stimulus_valence, y = mean, group = mood_induction), color=gray, linetype = "dashed") +
+  geom_point(data = df_aat_agg2_plot,
+             aes(x = stimulus_valence, y = mean, fill = stimulus_valence), size = 4) +
+  facet_grid(~mood_induction) +
+  guides(color = "none", fill = "none") +
+  ylim(-0.3, 0.2) +
+  labs(x = "stimulus valence by mood induction",
+       y = "log(RT) (scaled)",
+       title = "Stimulus model post. estimates and data means") +
+  theme(plot.title = element_text(hjust = 0.5, size=19))
+```
+
 
 ```{r hypothesistests}
 # difference between reaction times for the different valences?
@@ -447,3 +586,55 @@ hypothesis(fit_stimulusModelInt, 'Intercept + stimulus_valencepositive + mood_in
 ```
 
 Usually, I'd expect reaction times in response to negative stimuli to be smaller than reaction times in response to positive stimuli. Here, the exact opposite seems to be the case.
+
+#### Comparing with data from previous experiment:
+```{r load-raw-data}
+df_AAT_raw = read.csv("rohdaten_johannes.csv")
+load("affect-aat-raw-data.Rdata")
+```
+```{r preprocess-data, echo=FALSE}
+# bring raw data from both experiments to the same general form
+
+df_affectAAT <- df_aat_excc %>% 
+  mutate(study = "Affect-AAT") %>% 
+  select(study, reaction_times, subject_id, condition, stimulus_valence, pictures, correct)
+
+df_AAT <- df_AAT_raw %>% 
+  filter(condition == "jc" | condition == "ji") %>%   # only joystick conditions are relevant
+  mutate(condition = ifelse(condition == "jc", "congruent", "incongruent"), # data should have the same form as Affect-AAT data
+         correct = ifelse(comment == "correct trial", "1", "0"),
+         stimulus_valence = ifelse(picNumber <= 44, "positive", "negative"),
+         study = "AAT"
+         ) %>% 
+  rename(reaction_times = reactionTime) %>% 
+  rename(pictures = picNumber) %>% 
+  rename(subject_id = subjectnumber) %>% 
+  select(study, reaction_times, subject_id, condition, stimulus_valence, pictures, correct)
+ 
+df_full <- rbind(df_affectAAT, df_AAT)
+```
+```{r data-for-plotting, echo=FALSE}
+df_plot <- df_full %>% 
+  mutate(RT_AAT = ifelse(study == "AAT", reaction_times, NA),
+         RT_AffectAAT = ifelse(study == "Affect-AAT", reaction_times, NA))
+```
+```{r plot-study-stimulus, echo=FALSE}
+df_plot %>% 
+  ggplot(aes(x = pictures, y = reaction_times, color = study)) +
+  scale_color_manual(values = c(yellow, copper)) +
+  geom_point() + 
+  geom_vline(aes(xintercept = 44.5), color=gray, linetype="dashed") +
+  ylim(0,5) +
+  labs(
+    title = "Comparing raw data from AAT and Affect-AAT",
+    y = "raw reaction times [s]", 
+    x = "pictures (1-44 are positive, 45-88 are negative)"
+  )
+```
+```{r agg-means, echo=FALSE}
+df_agg <- df_plot %>% 
+  group_by(study, stimulus_valence) %>% 
+  summarise(mean = mean(reaction_times)) 
+df_agg
+```
+
