@@ -114,13 +114,13 @@ preprocess_aat <- function(data) {
                    response = pushtimes[1:176],
                    pushtimes = pushtimes[1:176],
                    pulltimes = pulltimes[1:176],
-                   reaction_times = alltimes[1:176] * 1000) %>% # change scaling to ms
-    mutate(stimulus = ifelse(pictures <= 44, "positive", "negative"),
+                   reaction_times = alltimes[1:176]) %>%
+    mutate(stimulus_valence = ifelse(pictures <= 44, "positive", "negative"),
            response = ifelse(response == 0, "pull", "push"),
-           correct = ifelse(((condition == "congruent" & stimulus == "positive" & response == "pull") |
-                               (condition == "congruent" & stimulus == "negative" & response == "push") |
-                               (condition == "incongruent" & stimulus == "positive" & response == "push") |
-                               (condition == "incongruent" & stimulus == "negative" & response == "pull")), 1, 0))
+           correct = ifelse(((condition == "congruent" & stimulus_valence == "positive" & response == "pull") |
+                               (condition == "congruent" & stimulus_valence == "negative" & response == "push") |
+                               (condition == "incongruent" & stimulus_valence == "positive" & response == "push") |
+                               (condition == "incongruent" & stimulus_valence == "negative" & response == "pull")), 1, 0))
 }
 ```
 Writing a preprocessing function for the mood induction relevant data (information about the participants and conditions and the PANAS questionnaire data).
@@ -363,7 +363,7 @@ The individual responses to the PANAS questionnaire items (20 items, responses w
 ```{r calc_panas_scores}
 print(df_affect_excs)
 df_affect_scores <- df_affect_excs %>% 
-  group_by(subject_id, session_nr, mood_induction, subjectgender, panas_nr, item_affect, panas_item) %>% 
+  group_by(subject_id, session_nr, mood_induction, subjectgender, panas_nr, item_affect) %>% 
   summarise(panas_score = sum(item_score)) %>% 
   ungroup()
 ```
@@ -371,7 +371,7 @@ I'm solving this problem (that I have two PANAS scores) by recoding NA scores su
 The data is recoded such that NA scale panas scores receive a negative leading sign.
 ```{r recode-scores}
 df_affect_mutate <- df_affect_scores %>% 
-  mutate(panas_score = ifelse(item_affect == "NA", -panas_score, panas_score))
+  mutate(panas_score = ifelse(item_affect == "NA", -panas_score, panas_score)) 
 ```
 ```{r aggregate}
 df_affect_agg <- df_affect_mutate %>% 
@@ -382,13 +382,14 @@ df_affect_agg <- df_affect_mutate %>%
 ```
 ```{r save-panas-data}
 save(df_affect_mutate, file = "panas.Rdata")
+save(df_affect_excs, file = "panas_item.Rdata")
 ```
 
 ### Further preprocessing AAT data
 The AAT data also needs further preprocessing. Here's a plot of the raw data:
 ```{r plot_raw_data, echo=FALSE}
 df_aat_excs %>% 
-  ggplot(aes(x = reaction_times)) +
+  ggplot(aes(x = reaction_times *1000)) + # change to ms scale
   geom_histogram(binwidth = 100, fill="#DE8F6E", color="#424B54") + 
   labs(
     title = "Raw data",
@@ -422,6 +423,7 @@ exc_incorrect <- round(((nr_exct - nr_excc) / nr_exct) * 100, 2) #%>% print() # 
 
 # exclude reaction times under 150ms because they are probably artifacts
 df_aat_excRT <- df_aat_excc %>% 
+  mutate(reaction_times = reaction_times * 1000) %>% # transform reaction times to ms scale
   filter(reaction_times > 150)
 
 nr_excRT <- nrow(df_aat_excRT) #%>% print() # 29295
@@ -501,11 +503,14 @@ df_aat_log %>%
   stat_function(fun = function(x) dnorm(x, mean = mean, sd = sd) * n * binwidth,
     color = "#424B54", size = 1) +
   labs(
-    title = "Log-transformed data",
-    x = "log(RT)"
-  )
+    title = "Log-transformed reaction time data",
+    x = "log(RT) (scaled)", 
+    y = "count"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5))
 ```
 
 ```{r save-aat-data}
 save(df_aat_log, file = "affect-aat.Rdata")
+save(df_aat_excc, file = "affect-aat-raw-data.Rdata")
 ```
