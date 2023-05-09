@@ -189,6 +189,9 @@ panas_item = c("interested", "distressed", "excited", "upset", "strong", "guilty
 # item affects in the correct order
 item_affect = c("PA", "NA", "PA", "NA", "PA", "NA", "NA", "NA", "PA", "PA", "NA", "PA", "NA", "PA", "NA", "PA", "PA", "NA", "PA", "NA")
 
+# calculate arousal scores
+arousal = c(as.numeric(panas_2) - as.numeric(panas_1)) # as difference between PANAS items before and after the mood induction (no difference regarding PA or NA) - positive value if arousal increased, negative value if arousal decreased
+
 df <- data.frame(subject_id = rep(as.numeric(subject_id), 20),
                  subjectname = rep(subjectname, 20),
                  subjectgender = rep(subjectgender, 20),
@@ -200,7 +203,8 @@ df <- data.frame(subject_id = rep(as.numeric(subject_id), 20),
                  item_nr = c(1:20),
                  item_affect = item_affect,
                  panas_1 = as.numeric(panas_1),
-                 panas_2 = as.numeric(panas_2)) %>% 
+                 panas_2 = as.numeric(panas_2),
+                 arousal = arousal) %>% 
   mutate(mood_induction = ifelse(mood_induction == "p", "positive", "negative")) %>% 
   rename('1' = panas_1, '2' = panas_2) %>% 
   pivot_longer(cols = c('1', '2'), names_to = "panas_nr", values_to = "item_score")
@@ -223,6 +227,24 @@ for (data_file in session_2) {
 head(df_aat)
 head(df_affect)
 ```
+```{r create-joined-df}
+# add arousal value to df_aat (need one arousal value per subject, session and mood induction for full_join)
+df_arousal <- df_affect %>% # 198 x 4
+  group_by(subject_id, session_nr, mood_induction) %>% 
+  summarise(arousal_score = sum(arousal)/2) %>% # divide by 2 because I had double arousal values (per panas_nr)
+  ungroup()
+
+df_arousal_for_join <- data.frame(subject_id = rep(df_arousal$subject_id, each=176), # 34,848 x 4
+                                  session_nr = rep(df_arousal $session_nr, each=176),
+                                  mood_induction = rep(df_arousal$mood_induction, each=176),
+                                  arousal_score = rep(df_arousal$arousal_score, each=176)) %>% 
+  mutate(mood_induction = ifelse(mood_induction == "positive", "p", "n"))
+
+df_aat_for_join <- df_aat %>% # 34,848 x 22
+  arrange(subject_id, session_nr) # bring in same order
+
+joined_df <- cbind(df_aat_for_join, df_arousal_for_join['arousal_score']) # 34,848 × 23
+```
 
 ### Exclude data
 Data from subjects 8, 10, 16, 24, 33 and 50 had to be excluded because of one of three reasons:
@@ -231,12 +253,12 @@ Data from subjects 8, 10, 16, 24, 33 and 50 had to be excluded because of one of
 3) or it was not possible to collect a full set of data (from two sessions).
 ```{r exclude-subjects}
 # check whether for each subjectindex is data available from two sessions and two mood inductions (and the same block order)
-df_aat_check <- df_aat %>% 
+df_aat_check <- joined_df %>% 
   group_by(subject_id, session_nr, mood_induction, block_order) %>% 
   summarize() 
 
 # only keep data when data from both sessions is available and no measurement errors occured
-df_aat_excs <- df_aat %>% 
+df_aat_excs <- joined_df %>% 
   filter(subject_id != 8     # data from 1st session is missing
          & subject_id != 10  # participant didn't fulfill the criteria
          & subject_id != 16  # 2nd session data is missing
