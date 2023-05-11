@@ -1,0 +1,450 @@
+---
+title: "Final_Analyses"
+author: "Kristina Kobrock"
+date: "2023-05-08"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, message = FALSE, warning = FALSE)
+```
+```{r libraries, include=FALSE, message=FALSE, warning=FALSE}
+# package to extract R data from matlab files
+library(R.matlab)
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package for plotting (together with ggplot)
+library(ggpubr)
+
+# package to visualize 
+library(bayesplot)
+
+# package to extract CrIs
+library(bayestestR)
+
+# package needed for bayestestR
+library(logspline)
+
+# package to extract HDIs
+library(HDInterval)
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+```
+
+# The role of affect and arousal in the Automatic Approach Bias: An empirical investigation.
+
+```{r load-data, echo=FALSE}
+# load data
+load("affect-aat.Rdata")
+```
+```{r preprocess-data, echo=FALSE}
+# bring raw data from both experiments to the same general form
+
+df_affectAAT <- df_aat_log %>% 
+  dplyr::select(reaction_times, log_RT, log_RT_s, subject_id, condition, 
+         mood_induction, stimulus_valence, pictures, correct, trial) %>% 
+  rename(emotional_priming = mood_induction) %>% 
+  mutate(emotional_priming = ifelse(emotional_priming == "p", "positive", "negative"))
+head(df_affectAAT)
+```
+
+### Sum contrast coding
+```{r contrast-coding}
+# sum contrast coding of independent variables: -1, 1
+# For now, it suffices to say that we assign a +1 to c_cond for the “incongruent” condition, and a -1 for the “congruent” condition (i.e., a sum-contrast coding). Under this contrast coding, if the posterior mean of the parameter β turns out to be positive, that would mean that the model predicts that the incongruent condition has slower reaction times than the congruent one. 
+df_aat <- df_aat_log %>% 
+  mutate(mood_induction = factor(ifelse(mood_induction == "p", 1, -1)),
+         condition = factor(ifelse(condition == "congruent", 1, -1)),
+         stimulus_valence = factor(ifelse(stimulus_valence == "positive", 1, -1)))
+```
+
+## First Model: AAB main effect
+
+### Priors
+```{r adjpriors, echo=FALSE}
+priors <- c(set_prior("normal(6.65, 0.1)", class = "Intercept"),
+            set_prior("normal(0, 0.05)", class = "b"), # agnostic regarding the direction of the effect: centered on 0
+            set_prior("normal(0, 0.1)", class = "sd"),
+            set_prior("normal(0, 0.5)", class = "sigma"),
+            set_prior("lkj(2)", class = "cor")
+            ) 
+```
+```{r}
+# use brms to sample prior predictive data
+fit_adj_prior <- brm(reaction_times ~ condition
+                        + (condition | subject_id),
+                          data = df_aat,
+                          family = lognormal(),
+                          prior = priors,
+                          sample_prior = "only",
+                          file = "prior_aab_main"
+)
+
+# collapses reaction times above 2000ms for better visualization
+mean_2000 <- function(x) {
+  tmp <- mean(x)
+  tmp[tmp > 2000] <- 2000
+  tmp
+}
+sd_2000 <- function(x) {
+  tmp <- sd(x)
+  tmp[tmp > 2000] <- 2000
+  tmp
+}
+
+fig_pp_check <- pp_check(fit_adj_prior,
+                         type = "stat",
+                         stat = "mean_2000",
+                         prefix = "ppd") +
+  labs(x = "Mean RT [ms]") + 
+  theme(legend.position = "none")
+fig_pp_check
+
+fig_sd <- pp_check(fit_adj_prior,
+                   type = "stat",
+                   stat = "sd_2000",
+                   prefix = "ppd") +
+  labs(x = "Standard Deviation RT [ms]") +
+  theme(legend.position = "none")
+fig_sd
+```
+```{r}
+effsize_2000 <- function(x) {
+  tmp <- mean(x[df_aat$condition == +1]) -
+    mean(x[df_aat$condition == -1])
+  tmp[tmp > +2000] <- +2000
+  tmp[tmp < -2000] <- -2000
+  tmp
+}
+fig_pri_1d <- pp_check(fit_adj_prior,
+                       type = "stat",
+                       stat = "effsize_2000",
+                       prefix = "ppd") +
+  labs(x = "Congruent - Incongruent [C-I RT]") +
+  theme(legend.position = "none")
+fig_pri_1d
+```
+```{r}
+# effect size per subject
+EffectSizeMax <- EffectSizeSD <- NA
+for (i in 1:nsim) { tmp <- NA
+  expdesign$rtfake <- rtfakemat[,i]
+  tmp <- expdesign%>%group_by(subj,so)%>%summarize(rtfake=mean(rtfake))%>%
+    spread(key="so",value="rtfake") %>% mutate(dif = `1` - `-1`)
+  EffectSizeSD[ i] <- sd(     tmp$dif ,na.rm=TRUE)
+  EffectSizeMax[i] <- max(abs(tmp$dif),na.rm=TRUE)
+}
+EffectSizeMax[EffectSizeMax>2000] <- 2000
+FigPri1e <- ggplot()+stat_bin(aes(x=EffectSizeMax), fill=c_dark)+
+         labs(x="Max Effect Size [S-O RT]")
+EffectSizeSD[EffectSizeSD>2000] <- 2000
+FigPri1f <- ggplot()+stat_bin(aes(x=EffectSizeSD), fill=c_dark)+
+         labs(x="SD Effect Size [S-O RT]")
+```
+
+```{r}
+nsimX <- 100000
+
+# Intercept
+dTmp <- data.frame(norm=rnorm(nsimX,6.65,0.1))
+dTmp$expnorm <- exp(dTmp$norm)
+pPAdj_A <- ggplot(data=dTmp, aes(x=norm,y=..density..)) + geom_density() + 
+  labs(x="Prior distribution in log-space\n[normal distribution]", title="Intercept")
+pPAdj_B <- ggplot(data=subset(dTmp,expnorm<2500), aes(x=expnorm,y=..density..)) + 
+  geom_density() + 
+  labs(x="Prior distribution in ms space\n[lognormal distribution]", title="Intercept")
+
+# Effect size SO
+dTmp2 <- data.frame(int=rnorm(nsimX,6.65,0.1), so=rnorm(nsimX,0,0.05))
+dTmp2$cond1 <- dTmp2$int + dTmp2$so
+dTmp2$cond2 <- dTmp2$int - dTmp2$so
+dTmp2$logcond1 <- exp(dTmp2$cond1)
+dTmp2$logcond2 <- exp(dTmp2$cond2)
+dTmp2$expso <- dTmp2$logcond1 - dTmp2$logcond2
+# I'm not sure whether this is correct?
+pPAdj_C <- ggplot(data=dTmp2, aes(x=so,y=..density..)) + geom_density() + 
+  labs(x="Prior distribution in log-space\n[normal distribution]", title="Effect size")
+pPAdj_D <- ggplot(data=subset(dTmp2,abs(expso)<2500), aes(x=expso,y=..density..)) + geom_density() + 
+  labs(x="Prior distribution in ms space\n[lognormal distribution]", title="Effect size")
+
+txtSz <- 11
+pPAdj_A <- pPAdj_A + theme_bw(base_size=txtSz)
+pPAdj_B <- pPAdj_B + theme_bw(base_size=txtSz)
+pPAdj_C <- pPAdj_C + theme_bw(base_size=txtSz)
+pPAdj_D <- pPAdj_D + theme_bw(base_size=txtSz)
+#quartz(width=5.5,height=5.5)
+cowplot::plot_grid(pPAdj_A, pPAdj_B, pPAdj_C, pPAdj_D, labels=c("a","b","c","d"), ncol=2, rel_widths=c(1,1.2))
+```
+
+### Model
+```{r}
+fit_aab_main <- brm(reaction_times ~ condition
+                        + (condition | subject_id),
+                          data = df_aat,
+                          family = lognormal(),
+                          prior = priors,
+                          cores = getOption("mc.cores", 4),
+                          #control = list(adapt_delta = 0.9),
+                          #iter = 20000, 
+                          #warmup = 2000,
+                          save_pars = save_pars(all = TRUE),
+                          file = "aab_main_final")
+summary(fit_aab_main)
+```
+
+```{r}
+describe_posterior(fit_aab_main, centrality = "mean", ci_method = "hdi", test = c("p_direction", "rope", "bf"), rope_range = rope_range(fit_aab_main))
+```
+
+```{r}
+hypothesis(fit_aab_main, "condition1 < 0")
+```
+
+## Second model: Stimulus valence main effect
+### Priors
+```{r adjpriors, echo=FALSE}
+priors <- c(set_prior("normal(6.65, 0.1)", class = "Intercept"),
+            set_prior("normal(0, 0.05)", class = "b"), # agnostic regarding the direction of the effect: centered on 0
+            set_prior("normal(0, 0.1)", class = "sd"),
+            set_prior("normal(0, 0.5)", class = "sigma"),
+            set_prior("lkj(2)", class = "cor")
+            ) 
+```
+```{r}
+# use brms to sample prior predictive data
+prior_stimulus_main <- brm(reaction_times ~ condition * stimulus_valence
+                        + (condition * stimulus_valence | subject_id),
+                          data = df_aat,
+                          family = lognormal(),
+                          prior = priors,
+                          sample_prior = "only",
+                          file = "prior_stimulus_main"
+)
+
+# collapses reaction times above 2000ms for better visualization
+mean_2000 <- function(x) {
+  tmp <- mean(x)
+  tmp[tmp > 2000] <- 2000
+  tmp
+}
+sd_2000 <- function(x) {
+  tmp <- sd(x)
+  tmp[tmp > 2000] <- 2000
+  tmp
+}
+
+fig_pp_check <- pp_check(prior_stimulus_main,
+                         type = "stat",
+                         stat = "mean_2000",
+                         prefix = "ppd") +
+  labs(x = "Mean RT [ms]") + 
+  theme(legend.position = "none")
+fig_pp_check
+
+fig_sd <- pp_check(prior_stimulus_main,
+                   type = "stat",
+                   stat = "sd_2000",
+                   prefix = "ppd") +
+  labs(x = "Standard Deviation RT [ms]") +
+  theme(legend.position = "none")
+fig_sd
+```
+```{r}
+effsize_2000 <- function(x) {
+  tmp <- mean(x[df_aat$stimulus_valence == +1]) -
+    mean(x[df_aat$stimulus_valence == -1])
+  tmp[tmp > +2000] <- +2000
+  tmp[tmp < -2000] <- -2000
+  tmp
+}
+fig_pri_1d <- pp_check(prior_stimulus_main,
+                       type = "stat",
+                       stat = "effsize_2000",
+                       prefix = "ppd") +
+  labs(x = "Positive - Negative [P-N RT]") +
+  theme(legend.position = "none")
+fig_pri_1d
+```
+```{r}
+nsimX <- 100000
+
+# Intercept
+dTmp <- data.frame(norm=rnorm(nsimX,6.65,0.1))
+dTmp$expnorm <- exp(dTmp$norm)
+pPAdj_A <- ggplot(data=dTmp, aes(x=norm,y=..density..)) + geom_density() + 
+  labs(x="Prior distribution in log-space\n[normal distribution]", title="Intercept")
+pPAdj_B <- ggplot(data=subset(dTmp,expnorm<2500), aes(x=expnorm,y=..density..)) + 
+  geom_density() + 
+  labs(x="Prior distribution in ms space\n[lognormal distribution]", title="Intercept")
+
+# Effect size SO
+dTmp2 <- data.frame(int=rnorm(nsimX,6.65,0.1), so=rnorm(nsimX,0,0.05))
+dTmp2$cond1 <- dTmp2$int + dTmp2$so
+dTmp2$cond2 <- dTmp2$int - dTmp2$so
+dTmp2$logcond1 <- exp(dTmp2$cond1)
+dTmp2$logcond2 <- exp(dTmp2$cond2)
+dTmp2$expso <- dTmp2$logcond1 - dTmp2$logcond2
+# I'm not sure whether this is correct?
+pPAdj_C <- ggplot(data=dTmp2, aes(x=so,y=..density..)) + geom_density() + 
+  labs(x="Prior distribution in log-space\n[normal distribution]", title="Effect size")
+pPAdj_D <- ggplot(data=subset(dTmp2,abs(expso)<2500), aes(x=expso,y=..density..)) + geom_density() + 
+  labs(x="Prior distribution in ms space\n[lognormal distribution]", title="Effect size")
+
+txtSz <- 11
+pPAdj_A <- pPAdj_A + theme_bw(base_size=txtSz)
+pPAdj_B <- pPAdj_B + theme_bw(base_size=txtSz)
+pPAdj_C <- pPAdj_C + theme_bw(base_size=txtSz)
+pPAdj_D <- pPAdj_D + theme_bw(base_size=txtSz)
+#quartz(width=5.5,height=5.5)
+cowplot::plot_grid(pPAdj_A, pPAdj_B, pPAdj_C, pPAdj_D, labels=c("a","b","c","d"), ncol=2, rel_widths=c(1,1.2))
+```
+
+## Three-way interaction
+### Priors
+```{r adjpriors, echo=FALSE}
+priors <- c(set_prior("normal(6.65, 0.1)", class = "Intercept"),
+            set_prior("normal(0, 0.05)", class = "b"), # agnostic regarding the direction of the effect: centered on 0
+            set_prior("normal(0, 0.1)", class = "sd"),
+            set_prior("normal(0, 0.5)", class = "sigma")
+            #set_prior("lkj(2)", class = "cor")
+            ) 
+```
+```{r}
+# use brms to sample prior predictive data
+priors_3_way_int <- brm(reaction_times ~ condition * mood_induction * stimulus_valence
+                           + (condition * mood_induction || subject_id),
+                          data = df_aat,
+                          family = lognormal(),
+                          prior = priors,
+                          sample_prior = "only",
+                          file = "priors_3_way_int"
+)
+
+# collapses reaction times above 2000ms for better visualization
+mean_2000 <- function(x) {
+  tmp <- mean(x)
+  tmp[tmp > 2000] <- 2000
+  tmp
+}
+sd_2000 <- function(x) {
+  tmp <- sd(x)
+  tmp[tmp > 2000] <- 2000
+  tmp
+}
+
+fig_pp_check <- pp_check(priors_3_way_int,
+                         type = "stat",
+                         stat = "mean_2000",
+                         prefix = "ppd") +
+  labs(x = "Mean RT [ms]") + 
+  theme(legend.position = "none")
+fig_pp_check
+
+fig_sd <- pp_check(priors_3_way_int,
+                   type = "stat",
+                   stat = "sd_2000",
+                   prefix = "ppd") +
+  labs(x = "Standard Deviation RT [ms]") +
+  theme(legend.position = "none")
+fig_sd
+```
+```{r}
+effsize_2000 <- function(x) {
+  tmp <- mean(x[df_aat$condition == +1]) -
+    mean(x[df_aat$condition == -1])
+  tmp[tmp > +2000] <- +2000
+  tmp[tmp < -2000] <- -2000
+  tmp
+}
+fig_pri_1d <- pp_check(priors_3_way_int,
+                       type = "stat",
+                       stat = "effsize_2000",
+                       prefix = "ppd") +
+  labs(x = "Congruent - Incongruent [C-I RT]") +
+  theme(legend.position = "none")
+fig_pri_1d
+```
+```{r}
+effsize_2000 <- function(x) {
+  tmp <- mean(x[df_aat$mood_induction == +1]) -
+    mean(x[df_aat$mood_induction == -1])
+  tmp[tmp > +2000] <- +2000
+  tmp[tmp < -2000] <- -2000
+  tmp
+}
+fig_pri_1d <- pp_check(priors_3_way_int,
+                       type = "stat",
+                       stat = "effsize_2000",
+                       prefix = "ppd") +
+  labs(x = "Positive - Negative [P-N RT]") +
+  theme(legend.position = "none")
+fig_pri_1d
+```
+```{r}
+effsize_2000 <- function(x) {
+  tmp <- mean(x[df_aat$stimulus_valence == +1]) -
+    mean(x[df_aat$stimulus_valence == -1])
+  tmp[tmp > +2000] <- +2000
+  tmp[tmp < -2000] <- -2000
+  tmp
+}
+fig_pri_1d <- pp_check(priors_3_way_int,
+                       type = "stat",
+                       stat = "effsize_2000",
+                       prefix = "ppd") +
+  labs(x = "Positive - Negative [P-N RT]") +
+  theme(legend.position = "none")
+fig_pri_1d
+```
+
+```{r stimulus-model-RE, echo=FALSE}
+
+fit_3_way_int <- brm(reaction_times ~ condition * mood_induction * stimulus_valence
+                           + (condition * mood_induction || subject_id),
+                           data = df_aat_log1,
+                           family = lognormal(),
+                           prior = priors,
+                           iter = 20000, 
+                           warmup = 2000,
+                           control = list(adapt_delta = 0.9),
+                           save_pars = save_pars(all = TRUE),
+                           cores = getOption("mc.cores", 4),
+                           seed = 805,
+                           file = "3_way_int_model_new" # stimulus_model_2block_2000iter
+                           )
+```
+```{r}
+posterior_summary(fit_3_way_int, variable = "b_condition")
+```
+```{r}
+sample_b_post <- as_draws_df(fit_3_way_int)$b_condition
+# We generate samples from the prior as well:
+N <- length(sample_b_post)
+sample_b_prior <- rnorm(N, 0, .01)
+samples <- tibble(
+  sample = c(sample_b_post, sample_b_prior),
+  distribution = c(rep("posterior", N), rep("prior", N))
+)
+ggplot(samples, aes(x = sample, fill = distribution)) +
+  geom_density(alpha = .5)
+```
+
+```{r}
+describe_posterior(fit_3_way_int, centrality = "mean", ci_method = "hdi", test = c("p_direction", "rope", "bf"), rope_range = rope_range(fit_3_way_int), priors = priors, effects = "all")
+```
+```{r}
+fitted(fit_3_way_int,
+       newdata = data.frame(condition = 0), # Since the set size is the only predictor and it is centered, for estimating the average accuracy, we can consider an imaginary observation where the c_set_size is zero. (If there were more centered predictors, we would need to set all of them to zero). 
+       summary = TRUE)[,c("Estimate", "Q2.5","Q97.5")]
+```
+
+
